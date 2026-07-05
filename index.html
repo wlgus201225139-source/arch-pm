@@ -608,10 +608,9 @@ function render(){
   if(S.view==='tasks'){ c.style.padding='0'; c.style.overflow='hidden'; }
   else { c.style.padding=''; c.style.overflow=''; }
   if(S.view==='dash'){
-    t.textContent='프로젝트 현황'; a.innerHTML='';
-    c.innerHTML=renderDash();
+    go('projects'); return;
   } else if(S.view==='projects'){
-    t.textContent='프로젝트 일정등록';
+    t.textContent='프로젝트 현황';
     a.innerHTML='';
     c.innerHTML=renderProjectsList();
   } else if(S.view==='detail' && S.pid){
@@ -639,8 +638,7 @@ function renderSidebar(){
   const nav=[
     { icon:'📋', label:'프로젝트 업무사항', v:'workstatus' },
     { icon:'☑', label:'프로젝트 업무등록', v:'tasks' },
-    { icon:'⊞', label:'프로젝트 현황', v:'dash' },
-    { icon:'◫', label:'프로젝트 일정등록', v:'projects' },
+    { icon:'⊞', label:'프로젝트 현황', v:'projects' },
     { sep:true, title:'시스템' },
     { icon:'⚙', label:'설정', v:'settings' }
   ];
@@ -718,6 +716,18 @@ function renderDash(){
 // PROJECTS LIST — 단계별 일정 비율 등록
 // ============================================================
 function renderProjectsList(){
+  const active=D.projects.filter(p=>p.status==='진행중').length;
+  const done=D.projects.filter(p=>p.status==='완료').length;
+  const hold=D.projects.filter(p=>p.status==='보류').length;
+  const overdue=D.schedules.filter(s=>s.status==='예정'&&s.end<today()).length;
+  const statStrip=`<div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
+  ${[{icon:'📋',val:active,lbl:'진행중',sf:'진행중',col:'var(--pr)'},{icon:'✅',val:done,lbl:'완료',sf:'완료',col:'var(--success)'},{icon:'⏸',val:hold,lbl:'보류',sf:'보류',col:'var(--warn)'},{icon:'⚠️',val:overdue,lbl:'기한초과',sf:'all',col:'var(--danger)'}]
+  .map(s=>`<div onclick="S.sf='${s.sf}';render()" style="cursor:pointer;flex:1;min-width:80px;padding:10px 14px;background:var(--w);border-radius:var(--rl);box-shadow:var(--sh);display:flex;align-items:center;gap:8px">
+    <span style="font-size:20px;font-weight:700;color:${s.col}">${s.val}</span>
+    <span style="font-size:12px;color:var(--muted)">${s.lbl}</span>
+  </div>`).join('')}
+</div>`;
+
   let list=D.projects;
   if(S.sf!=='all') list=list.filter(p=>p.status===S.sf);
   if(S.q) list=list.filter(p=>p.name.includes(S.q)||p.client.includes(S.q)||(p.addr&&p.addr.includes(S.q)));
@@ -763,10 +773,10 @@ function renderProjectsList(){
   });
 
   const grid = cards
-    ? `<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:14px;align-items:start">${cards}</div>`
+    ? `<div style="display:flex;flex-direction:column;gap:14px">${cards}</div>`
     : `<div class="empty"><div class="empty-i">📂</div><div class="empty-t">프로젝트가 없습니다</div><div class="empty-s">우측 상단 버튼으로 추가하세요</div></div>`;
 
-  return `
+  return statStrip+`
 <div class="fbar">
   <input class="si-input" style="max-width:280px" placeholder="프로젝트명, 건축주, 주소 검색..." value="${S.q}" oninput="S.q=this.value;render()">
   ${['all','진행중','완료','보류'].map(f=>`<button class="btn ${S.sf===f?'bp':'bs'} bsm" onclick="S.sf='${f}';render()">${f==='all'?'전체':f}</button>`).join('')}
