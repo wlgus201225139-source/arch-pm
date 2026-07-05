@@ -458,7 +458,7 @@ function doRegister() {
 // ============================================================
 // STATE
 // ============================================================
-let S = { view:'dash', pid:null, tab:'info', q:'', sf:'all', openCards:new Set() };
+let S = { view:'workstatus', pid:null, tab:'info', q:'', sf:'all', openCards:new Set() };
 
 function go(view, pid=null, tab='info') {
   S = { ...S, view, pid, tab };
@@ -625,6 +625,9 @@ function render(){
     // 스크롤 위치 복원
     const nb=document.getElementById('task-board-scroll');
     if(nb){ nb.scrollLeft=savedSL; nb.scrollTop=savedST; }
+  } else if(S.view==='workstatus'){
+    t.textContent='프로젝트 업무사항'; a.innerHTML='';
+    c.innerHTML=renderWorkStatus();
   } else if(S.view==='settings'){
     t.textContent='설정'; a.innerHTML='';
     c.innerHTML=renderSettings();
@@ -634,9 +637,10 @@ function render(){
 
 function renderSidebar(){
   const nav=[
+    { icon:'📋', label:'프로젝트 업무사항', v:'workstatus' },
+    { icon:'☑', label:'프로젝트 업무등록', v:'tasks' },
     { icon:'⊞', label:'프로젝트 현황', v:'dash' },
     { icon:'◫', label:'프로젝트 일정등록', v:'projects' },
-    { icon:'☑', label:'프로젝트 업무등록', v:'tasks' },
     { sep:true, title:'시스템' },
     { icon:'⚙', label:'설정', v:'settings' }
   ];
@@ -1002,13 +1006,46 @@ function renderScheduleTab(pid){
     const badgeCls=phaseSt==='done'?'b-gr':phaseSt==='current'?'b-bl':'b-gy';
     const barColor=phaseSt==='done'?'var(--success)':phaseSt==='current'?'var(--pr)':'#d1d5db';
 
-    const taskRows=tasks.map(t=>`
-<div style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px;border-radius:7px;background:${t.done?'var(--bg)':'#fff'};margin-bottom:5px;border:1px solid ${t.done?'var(--bd)':'var(--bd)'};transition:background 0.15s">
-  <input type="checkbox" ${t.done?'checked':''} onchange="togglePhaseTask('${pid}','${phase}','${t.id}')" style="margin-top:1px;cursor:pointer;width:16px;height:16px;accent-color:var(--pr);flex-shrink:0">
-  <span style="flex:1;font-size:13.5px;line-height:1.5;${t.done?'text-decoration:line-through;color:var(--muted)':'color:#111827'}">${t.text}</span>
-  <span style="font-size:10.5px;color:var(--muted);white-space:nowrap;margin-top:2px">${t.addedAt||''}</span>
-  <button onclick="delPhaseTask('${pid}','${phase}','${t.id}')" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px;padding:0 2px;line-height:1;opacity:0.5" title="삭제">✕</button>
+    const taskRows=tasks.map(t=>{
+      const subTasks=t.subTasks||[];
+      const subDone=subTasks.filter(s=>s.done).length;
+      const subTotal=subTasks.length;
+      const subWrapId=`sub-wrap-${t.id}`;
+      const subInputId=`sub-input-${t.id}`;
+      const subRows=subTasks.map(s=>`
+<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;background:${s.done?'#f0fdf4':'#f8fafc'};margin-bottom:3px;border:1px solid ${s.done?'#bbf7d0':'#e5e7eb'}">
+  <input type="checkbox" ${s.done?'checked':''} onchange="toggleSubTask('${pid}','${phase}','${t.id}','${s.id}')" style="cursor:pointer;width:14px;height:14px;accent-color:var(--pr);flex-shrink:0">
+  <span style="flex:1;font-size:12.5px;${s.done?'text-decoration:line-through;color:var(--muted)':'color:#374151'}">${s.text}</span>
+  ${subBadge(s)}
+  <button onclick="delSubTask('${pid}','${phase}','${t.id}','${s.id}')" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:11px;padding:0;opacity:0.5">✕</button>
 </div>`).join('');
+      return `
+<div style="border:1px solid var(--bd);border-radius:8px;margin-bottom:6px;background:${t.done?'var(--bg)':'#fff'}">
+  <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 12px">
+    <input type="checkbox" ${t.done?'checked':''} onchange="togglePhaseTask('${pid}','${phase}','${t.id}')" style="margin-top:2px;cursor:pointer;width:16px;height:16px;accent-color:var(--pr);flex-shrink:0">
+    <span style="flex:1;font-size:13.5px;line-height:1.5;${t.done?'text-decoration:line-through;color:var(--muted)':'color:#111827'}">${t.text}</span>
+    ${subTotal>0?`<span style="font-size:10.5px;padding:1px 7px;border-radius:10px;font-weight:600;white-space:nowrap;background:${subDone===subTotal?'#d1fae5':'#e0e7ff'};color:${subDone===subTotal?'#065f46':'#3730a3'}">${subDone}/${subTotal}</span>`:''}
+    <span style="font-size:10.5px;color:var(--muted);white-space:nowrap;margin-top:2px">${t.addedAt||''}</span>
+    <button onclick="delPhaseTask('${pid}','${phase}','${t.id}')" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px;padding:0 2px;line-height:1;opacity:0.5" title="삭제">✕</button>
+  </div>
+  <div style="padding:0 12px 10px 38px">
+    ${subRows}
+    <div id="${subWrapId}" style="display:none;margin-top:6px;padding:8px;background:#f8fafc;border-radius:6px;border:1px dashed var(--bd)">
+      <input id="${subInputId}" type="text" placeholder="하위 업무 내용..." style="width:100%;padding:6px 10px;border:1px solid var(--bd);border-radius:5px;font-size:12.5px;box-sizing:border-box;margin-bottom:7px;font-family:inherit"
+        onkeydown="if(event.key==='Enter')submitSubTask('${pid}','${phase}','${t.id}');if(event.key==='Escape')document.getElementById('${subWrapId}').style.display='none'">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--muted)">마감:</span>
+        <input id="sub-days-${t.id}" type="number" min="0" value="1" style="width:52px;padding:4px 7px;border:1px solid var(--bd);border-radius:5px;font-size:13px;text-align:center;font-family:inherit">
+        <span style="font-size:12px;color:var(--muted)">일 후</span>
+        <div style="flex:1"></div>
+        <button class="btn bp bsm" onclick="submitSubTask('${pid}','${phase}','${t.id}')">추가</button>
+        <button class="btn bs bsm" onclick="document.getElementById('${subWrapId}').style.display='none'">취소</button>
+      </div>
+    </div>
+    <button class="btn bs bsm" style="font-size:11.5px;margin-top:${subTotal?'4px':'0'}" onclick="document.getElementById('${subWrapId}').style.display='block';document.getElementById('${subInputId}').focus()">＋ 하위 업무</button>
+  </div>
+</div>`;
+    }).join('');
 
     const emptyRow=!total?`<div style="font-size:12px;color:var(--muted);padding:6px 2px">등록된 업무가 없습니다. 아래 버튼으로 추가하세요.</div>`:'';
 
@@ -1138,6 +1175,147 @@ function delPhaseTask(pid, phase, taskId){
   save(); render();
 }
 
+// ── 하위 업무 함수 ─────────────────────────────────────────
+function submitSubTask(pid, phase, taskId){
+  const inp=document.getElementById(`sub-input-${taskId}`);
+  if(!inp) return;
+  const text=inp.value.trim();
+  if(!text) return;
+  const daysEl=document.getElementById(`sub-days-${taskId}`);
+  const days=Math.max(0,parseInt(daysEl?.value??'1')||0);
+  const dueD=new Date(); dueD.setDate(dueD.getDate()+days);
+  const dueDate=dueD.toISOString().split('T')[0];
+  const tasks=D.phaseTasks?.[pid]?.[phase];
+  if(!tasks) return;
+  const task=tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  if(!task.subTasks) task.subTasks=[];
+  const now=new Date();
+  task.subTasks.push({id:uid(),text,done:false,dueDate,addedAt:`${now.getMonth()+1}/${now.getDate()}`});
+  save(); render();
+}
+
+function subBadge(sub,small){
+  const t=today();
+  const tmD=new Date(); tmD.setDate(tmD.getDate()+1);
+  const tm=tmD.toISOString().split('T')[0];
+  let due=sub.dueDate||(sub.due==='today'?t:sub.due==='tomorrow'?tm:t);
+  let label,bg,color;
+  if(due<t){const d=Math.round((new Date(t)-new Date(due))/86400000);label=`${d}일 초과`;bg='#fee2e2';color='#b91c1c';}
+  else if(due===t){label='오늘';bg='#dbeafe';color='#1d4ed8';}
+  else if(due===tm){label='내일';bg='#fef3c7';color='#92400e';}
+  else{const d=Math.round((new Date(due)-new Date(t))/86400000);label=`${d}일 후`;bg='#f0fdf4';color='#15803d';}
+  const fs=small?'9.5px':'10.5px';
+  return `<span style="font-size:${fs};padding:1px 7px;border-radius:10px;font-weight:600;white-space:nowrap;background:${bg};color:${color}">${label}</span>`;
+}
+
+function toggleSubTask(pid, phase, taskId, subId){
+  const tasks=D.phaseTasks?.[pid]?.[phase];
+  if(!tasks) return;
+  const task=tasks.find(t=>t.id===taskId);
+  if(!task||!task.subTasks) return;
+  const sub=task.subTasks.find(s=>s.id===subId);
+  if(!sub) return;
+  sub.done=!sub.done;
+  // 하위 업무 전체 완료 시 상위 업무 자동 완료
+  const allDone=task.subTasks.length>0&&task.subTasks.every(s=>s.done);
+  if(allDone) task.done=true;
+  else if(!sub.done) task.done=false;
+  save(); render();
+}
+
+function delSubTask(pid, phase, taskId, subId){
+  const tasks=D.phaseTasks?.[pid]?.[phase];
+  if(!tasks) return;
+  const task=tasks.find(t=>t.id===taskId);
+  if(!task||!task.subTasks) return;
+  task.subTasks=task.subTasks.filter(s=>s.id!==subId);
+  save(); render();
+}
+
+// ── 프로젝트 업무사항 뷰 ─────────────────────────────────────
+function renderWorkStatus(){
+  if(!D.phaseTasks) D.phaseTasks={};
+  const now=new Date();
+  const dayNames=['일','월','화','수','목','금','토'];
+  const t=today();
+  const tmD=new Date(now); tmD.setDate(tmD.getDate()+1);
+  const tm=tmD.toISOString().split('T')[0];
+  const todayLabel=`${now.getMonth()+1}월 ${now.getDate()}일 (${dayNames[now.getDay()]}요일)`;
+
+  // 미완료 하위업무 전체 수집 (구형 due 필드 호환)
+  const allItems=[];
+  D.projects.filter(p=>p.status==='진행중').forEach(p=>{
+    PHASES.forEach(phase=>{
+      (D.phaseTasks?.[p.id]?.[phase]||[]).forEach(task=>{
+        (task.subTasks||[]).forEach(sub=>{
+          if(sub.done) return;
+          let due=sub.dueDate||(sub.due==='today'?t:sub.due==='tomorrow'?tm:t);
+          allItems.push({proj:p,phase,task,sub,due});
+        });
+      });
+    });
+  });
+  allItems.sort((a,b)=>a.due<b.due?-1:a.due>b.due?1:0);
+
+  const overdue=allItems.filter(c=>c.due<t);
+  const todayItems=allItems.filter(c=>c.due===t);
+  const tmrowItems=allItems.filter(c=>c.due===tm);
+  const laterItems=allItems.filter(c=>c.due>tm);
+
+  const renderGroup=(items,emptyMsg)=>{
+    if(!items.length) return emptyMsg?`<div style="padding:14px;text-align:center;color:var(--muted);font-size:13px">${emptyMsg}</div>`:'';
+    const byProj={};
+    items.forEach(ctx=>{
+      if(!byProj[ctx.proj.id]) byProj[ctx.proj.id]={proj:ctx.proj,items:[]};
+      byProj[ctx.proj.id].items.push(ctx);
+    });
+    return Object.values(byProj).map(({proj,items:gi})=>`
+<div style="margin-bottom:12px">
+  <div style="font-size:12.5px;font-weight:700;color:var(--pr);padding:4px 10px;background:#eff6ff;border-radius:5px;border-left:3px solid var(--pr);margin-bottom:5px">${proj.name}</div>
+  ${gi.map(ctx=>`
+  <div style="display:flex;align-items:center;gap:10px;padding:8px 12px 8px 16px;border-radius:7px;background:#fff;margin-bottom:4px;border:1px solid #e5e7eb">
+    <input type="checkbox" onchange="toggleSubTask('${ctx.proj.id}','${ctx.phase}','${ctx.task.id}','${ctx.sub.id}')"
+      style="cursor:pointer;width:16px;height:16px;accent-color:var(--pr);flex-shrink:0">
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13.5px;color:#111827">${ctx.sub.text}</div>
+      <div style="font-size:11.5px;color:var(--muted);margin-top:2px">${ctx.phase} · ${ctx.task.text}</div>
+    </div>
+    ${subBadge(ctx.sub)}
+  </div>`).join('')}
+</div>`).join('');
+  };
+
+  const card=(title,items,badgeCls,emptyMsg,borderColor)=>`
+<div style="background:var(--w);border-radius:var(--rl);box-shadow:var(--sh);padding:18px 20px;margin-bottom:14px${borderColor?`;border-left:4px solid ${borderColor}`:''}">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+    <span style="font-size:15px;font-weight:700;color:${borderColor||'#111827'}">${title}</span>
+    <span class="badge ${badgeCls}" style="font-size:11.5px">${items.length}건</span>
+  </div>
+  ${renderGroup(items,emptyMsg)}
+</div>`;
+
+  return `
+<div style="max-width:700px">
+  <div style="margin-bottom:18px;padding:13px 18px;background:var(--w);border-radius:var(--rl);box-shadow:var(--sh);display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+    <span style="font-size:14px;font-weight:700;color:#111827">📋 프로젝트 업무사항</span>
+    <span style="font-size:13px;color:var(--muted)">${todayLabel}</span>
+    <div style="flex:1"></div>
+    <span style="font-size:12.5px;color:var(--muted)">미완료 <strong style="color:var(--pr)">${allItems.length}건</strong></span>
+  </div>
+  ${overdue.length?card('⚠ 기한 초과',overdue,'b-re','','#ef4444'):''}
+  ${card('오늘',todayItems,todayItems.length?'b-bl':'b-gy','오늘 마감 업무가 없습니다','')}
+  ${card('내일',tmrowItems,'b-gy','내일 마감 업무가 없습니다','')}
+  ${laterItems.length?card('예정',laterItems,'b-gy','',''):''}
+  ${!allItems.length?`
+  <div style="background:var(--w);border-radius:var(--rl);box-shadow:var(--sh);padding:48px 20px;text-align:center">
+    <div style="font-size:30px;margin-bottom:10px">✅</div>
+    <div style="font-size:14px;font-weight:600;color:var(--success);margin-bottom:4px">미완료 업무가 없습니다</div>
+    <div style="font-size:12.5px;color:var(--muted)">프로젝트 업무등록에서 하위 업무를 추가하세요</div>
+  </div>`:''}
+</div>`;
+}
+
 // ── TASK BOARD — 전체 프로젝트 업무 체크리스트 매트릭스 ─────────
 function renderTaskBoard(){
   if(!D.phaseTasks) D.phaseTasks={};
@@ -1171,14 +1349,46 @@ function renderTaskBoard(){
 
     const cells=PHASES.map(phase=>{
       const tasks=D.phaseTasks[p.id][phase]||[];
-      const taskItems=tasks.map(t=>`
-<div style="display:flex;align-items:flex-start;gap:7px;padding:6px 8px;border-radius:6px;background:${t.done?'#f9fafb':'#fff'};border:1px solid ${t.done?'#e5e7eb':'#e5e7eb'};margin-bottom:4px">
-  <input type="checkbox" ${t.done?'checked':''} onchange="togglePhaseTask('${p.id}','${phase}','${t.id}')"
-    style="margin-top:2px;cursor:pointer;accent-color:var(--pr);flex-shrink:0;width:14px;height:14px">
-  <span style="flex:1;font-size:12px;line-height:1.45;word-break:keep-all;${t.done?'text-decoration:line-through;color:#9ca3af':'color:#111827'}">${t.text}</span>
-  <button onclick="delPhaseTask('${p.id}','${phase}','${t.id}')" title="삭제"
-    style="background:none;border:none;cursor:pointer;color:#d1d5db;font-size:12px;padding:0;line-height:1;flex-shrink:0;margin-top:1px">✕</button>
+      const taskItems=tasks.map(t=>{
+        const subTasks=t.subTasks||[];
+        const subDone=subTasks.filter(s=>s.done).length;
+        const subTotal=subTasks.length;
+        const subWrapId=`sub-wrap-${t.id}`;
+        const subInputId=`sub-input-${t.id}`;
+        const subRows=subTasks.map(s=>`
+<div style="display:flex;align-items:center;gap:5px;padding:3px 6px;border-radius:4px;background:${s.done?'#f0fdf4':'#f8fafc'};margin-bottom:2px;border:1px solid ${s.done?'#bbf7d0':'#e5e7eb'}">
+  <input type="checkbox" ${s.done?'checked':''} onchange="toggleSubTask('${p.id}','${phase}','${t.id}','${s.id}')" style="cursor:pointer;width:12px;height:12px;accent-color:var(--pr);flex-shrink:0">
+  <span style="flex:1;font-size:11px;word-break:break-all;${s.done?'text-decoration:line-through;color:#9ca3af':'color:#374151'}">${s.text}</span>
+  ${subBadge(s,true)}
+  <button onclick="delSubTask('${p.id}','${phase}','${t.id}','${s.id}')" style="background:none;border:none;cursor:pointer;color:#d1d5db;font-size:10px;padding:0;line-height:1;flex-shrink:0">✕</button>
 </div>`).join('');
+        return `
+<div style="border:1px solid #e5e7eb;border-radius:6px;margin-bottom:4px;background:${t.done?'#f9fafb':'#fff'}">
+  <div style="display:flex;align-items:flex-start;gap:7px;padding:6px 8px">
+    <input type="checkbox" ${t.done?'checked':''} onchange="togglePhaseTask('${p.id}','${phase}','${t.id}')"
+      style="margin-top:2px;cursor:pointer;accent-color:var(--pr);flex-shrink:0;width:14px;height:14px">
+    <span style="flex:1;font-size:12px;line-height:1.45;word-break:keep-all;${t.done?'text-decoration:line-through;color:#9ca3af':'color:#111827'}">${t.text}</span>
+    ${subTotal>0?`<span style="font-size:9.5px;padding:0 5px;border-radius:8px;font-weight:600;white-space:nowrap;background:${subDone===subTotal?'#d1fae5':'#e0e7ff'};color:${subDone===subTotal?'#065f46':'#3730a3'}">${subDone}/${subTotal}</span>`:''}
+    <button onclick="delPhaseTask('${p.id}','${phase}','${t.id}')" title="삭제"
+      style="background:none;border:none;cursor:pointer;color:#d1d5db;font-size:12px;padding:0;line-height:1;flex-shrink:0;margin-top:1px">✕</button>
+  </div>
+  ${subTotal>0?`<div style="padding:0 8px 4px 27px">${subRows}</div>`:''}
+  <div style="padding:0 8px 5px 27px">
+    <div id="${subWrapId}" style="display:none;margin-bottom:4px;padding:6px;background:#f8fafc;border-radius:4px;border:1px dashed var(--bd)">
+      <input id="${subInputId}" type="text" placeholder="하위 업무 내용..." style="width:100%;padding:4px 7px;font-size:11.5px;border:1px solid var(--pr);border-radius:4px;box-sizing:border-box;font-family:inherit;margin-bottom:5px;outline:none"
+        onkeydown="if(event.key==='Enter')submitSubTask('${p.id}','${phase}','${t.id}');if(event.key==='Escape')document.getElementById('${subWrapId}').style.display='none'">
+      <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+        <span style="font-size:11px;color:var(--muted)">마감:</span>
+        <input id="sub-days-${t.id}" type="number" min="0" value="1" style="width:44px;padding:2px 5px;border:1px solid var(--bd);border-radius:4px;font-size:11.5px;text-align:center;font-family:inherit">
+        <span style="font-size:11px;color:var(--muted)">일 후</span>
+        <button onclick="submitSubTask('${p.id}','${phase}','${t.id}')" style="padding:2px 9px;background:var(--pr);color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:11px">추가</button>
+        <button onclick="document.getElementById('${subWrapId}').style.display='none'" style="padding:2px 7px;background:#f3f4f6;color:#6b7280;border:1px solid #e5e7eb;border-radius:4px;cursor:pointer;font-size:11px">취소</button>
+      </div>
+    </div>
+    <button onclick="document.getElementById('${subWrapId}').style.display='block';document.getElementById('${subInputId}').focus()" style="font-size:11px;color:var(--pr);background:none;border:none;cursor:pointer;padding:0;opacity:0.75">＋ 하위 업무</button>
+  </div>
+</div>`;
+      }).join('');
 
       return `<td style="padding:10px 12px;border-bottom:1px solid var(--bd);border-right:1px solid var(--bd);vertical-align:top;background:#fff">
   ${taskItems}
@@ -2005,7 +2215,9 @@ function renderLawContent(text, opts={}) {
   // ① 분리는 항상 안전. 숫자 목록은 앞 글자가 숫자가 아닐 때만 분리 (1. 1. 중복 방지)
   const normalized = text
     .replace(/([^\n])([①-⑳])/g, '$1\n$2')
-    .replace(/(?<!\d)(\S)[ \t]+(\d{1,2})\. (?=[가-힣A-Za-z])/g, '$1\n$2. ');
+    .replace(/(?<!\d)(\S)[ \t]+(\d{1,2})\. (?=[가-힣A-Za-z])/g, '$1\n$2. ')
+    .replace(/(?<![의조항호])([가-힣\)])(\d{1,2})\. (?=[가-힣A-Za-z])/g, '$1\n$2. ')
+    .replace(/\.(\d{1,2})\. (?=[가-힣A-Za-z\d「])/g, '.\n$1. ');
   let inHang = false;
   const result = normalized.split('\n').map(line => {
     if (!line.trim()) return '';
