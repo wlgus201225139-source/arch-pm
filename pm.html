@@ -658,6 +658,71 @@ function loadGcal(){
     if(V.screen==='cal') render();
   });
 }
+// ── 구글 계정 바로 연동 (OAuth) ───────────────────────────
+// 보조 Firebase 앱 인스턴스로 구글 로그인 → Calendar API 토큰만 얻고 즉시 로그아웃.
+// (메인 이메일 로그인 세션에 영향 없음) 일정은 이 기기에만 표시되고 Firestore에 저장하지 않는다.
+let GOA={token:null,exp:0,events:null,loading:false,error:''};
+try{ const s=JSON.parse(sessionStorage.getItem('archpm_goa')||'null');
+  if(s&&s.exp>Date.now()){ GOA.token=s.token; GOA.exp=s.exp; } }catch(e){}
+function goaConnect(){
+  let gapp;
+  try{ gapp=firebase.app('gauth'); }catch(e){ gapp=firebase.initializeApp(FB_CONFIG,'gauth'); }
+  const provider=new firebase.auth.GoogleAuthProvider();
+  provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+  GOA.error='';
+  gapp.auth().signInWithPopup(provider).then(res=>{
+    const token=res.credential&&res.credential.accessToken;
+    gapp.auth().signOut();
+    if(!token){ GOA.error='토큰을 받지 못했습니다. 다시 시도해 주세요.'; render(); return; }
+    GOA={token,exp:Date.now()+50*60*1000,events:null,loading:false,error:''};
+    try{ sessionStorage.setItem('archpm_goa',JSON.stringify({token:GOA.token,exp:GOA.exp})); }catch(e){}
+    loadGoa(true); render();
+  }).catch(e=>{
+    GOA.error = e.code==='auth/operation-not-allowed'
+      ? 'Firebase 콘솔에서 Google 로그인 사용 설정이 필요합니다.'
+      : e.code==='auth/unauthorized-domain'
+      ? 'Firebase 승인된 도메인에 arch-pm-omega.vercel.app 추가가 필요합니다.'
+      : (e.code==='auth/popup-closed-by-user'||e.code==='auth/cancelled-popup-request') ? ''
+      : '연동 실패: '+(e.message||e.code);
+    render();
+  });
+}
+function goaDisconnect(){
+  GOA={token:null,exp:0,events:null,loading:false,error:''};
+  try{ sessionStorage.removeItem('archpm_goa'); }catch(e){}
+  render();
+}
+function loadGoa(force){
+  if(!GOA.token||GOA.exp<Date.now()) return;
+  if(!force&&(GOA.events||GOA.loading)) return;
+  GOA.loading=true;
+  const now=new Date();
+  const tMin=new Date(now.getFullYear(),now.getMonth()-1,1).toISOString();
+  const tMax=new Date(now.getFullYear(),now.getMonth()+7,0).toISOString();
+  fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&maxResults=2500&orderBy=startTime&timeMin='+encodeURIComponent(tMin)+'&timeMax='+encodeURIComponent(tMax),
+    {headers:{Authorization:'Bearer '+GOA.token}})
+  .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+  .then(j=>{
+    const evs=(j.items||[]).filter(it=>it.status!=='cancelled').map(it=>{
+      let d=null;
+      if(it.start&&it.start.date) d=it.start.date;
+      else if(it.start&&it.start.dateTime){
+        const dt=new Date(it.start.dateTime);
+        d=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+      }
+      return {date:d,label:(it.summary||'(제목 없음)'),cal:'내 구글 캘린더'};
+    }).filter(e=>e.date);
+    GOA.events=evs; GOA.loading=false; GOA.error='';
+    if(V.screen==='cal') render();
+  })
+  .catch(e=>{
+    GOA.loading=false; GOA.token=null; GOA.events=null;
+    GOA.error='구글 일정을 불러오지 못했습니다. Calendar API 사용 설정을 확인하거나 다시 연동해 주세요.';
+    try{ sessionStorage.removeItem('archpm_goa'); }catch(x){}
+    if(V.screen==='cal') render();
+  });
+}
+
 function addGcal(){
   const name=(document.getElementById('gc-name')?.value||'').trim();
   const url=(document.getElementById('gc-url')?.value||'').trim();
@@ -702,9 +767,9 @@ function renderCal(){
   const ym=V.calYm||t.slice(0,7); V.calYm=ym;
   const [y,m]=ym.split('-').map(Number);
   const events=calEvents(V.calMine);
-  // 구글 캘린더 일정 병합
-  loadGcal();
-  (GCAL.events||[]).forEach(e=>{
+  // 구글 캘린더 일정 병합 (공유 iCal + 내 계정 OAuth)
+  loadGcal(); loadGoa();
+  (GCAL.events||[]).concat(GOA.events||[]).forEach(e=>{
     if(!e.date) return;
     (events[e.date]=events[e.date]||[]).push({t:'gcal',pid:null,pname:e.cal,label:e.label});
   });
@@ -766,11 +831,22 @@ ${selList}`;
 }
 function renderGcalConfig(){
   const cals=D.gcalCals||[];
+  const goaOn=!!(GOA.token&&GOA.exp>Date.now());
+  const goaRow=goaOn
+    ?`<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:8px">
+        <span style="font-size:13px;flex:1">✓ 내 구글 계정 연동됨${GOA.loading?' · 불러오는 중...':GOA.events?` · 일정 ${GOA.events.length}개`:''}</span>
+        <button class="task-del" style="font-size:11.5px;color:var(--muted)" onclick="goaDisconnect()">해제</button>
+      </div>`
+    :`<button class="open-add" style="margin:0 0 8px" onclick="goaConnect()">🔗 구글 계정으로 바로 연동</button>`;
+  const goaErr=GOA.error?`<div style="font-size:11.5px;color:var(--danger);margin-bottom:8px">${esc(GOA.error)}</div>`:'';
   return `
 <div class="card" style="padding:12px 14px">
-  <button class="sub-add-btn" style="font-size:13px" onclick="V.gcalOpen=!V.gcalOpen;render()">⚙ 구글 캘린더 연동 ${cals.length?`(${cals.length}개 연결됨)`:''}</button>
+  <button class="sub-add-btn" style="font-size:13px" onclick="V.gcalOpen=!V.gcalOpen;render()">⚙ 구글 캘린더 연동 ${(cals.length||goaOn)?`(연결됨)`:''}</button>
   ${V.gcalOpen?`
   <div style="margin-top:10px">
+    ${goaRow}${goaErr}
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">내 구글 계정의 기본 캘린더 일정을 이 기기에서 바로 봅니다. 연동은 기기별이며 다른 사람에게는 보이지 않습니다.</div>
+    <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;border-top:1px solid var(--bd);padding-top:10px">공유 캘린더 (iCal 주소)</div>
     ${cals.map((c,i)=>`
     <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8fafc;border:1px solid var(--bd);border-radius:7px;margin-bottom:5px">
       <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${CAL_COLORS.gcal};flex-shrink:0"></span>
