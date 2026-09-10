@@ -629,6 +629,9 @@ function render(){
   } else if(S.view==='workstatus'){
     t.textContent='프로젝트 업무사항'; a.innerHTML='';
     c.innerHTML=renderWorkStatus();
+  } else if(S.view==='calendar'){
+    t.textContent='마감 캘린더'; a.innerHTML='';
+    c.innerHTML=renderCalendarView();
   } else if(S.view==='settings'){
     t.textContent='설정'; a.innerHTML='';
     c.innerHTML=renderSettings();
@@ -641,6 +644,7 @@ function renderSidebar(){
     { icon:'📋', label:'프로젝트 업무사항', v:'workstatus' },
     { icon:'☑', label:'프로젝트 업무등록', v:'tasks' },
     { icon:'⊞', label:'프로젝트 현황', v:'projects' },
+    { icon:'📅', label:'마감 캘린더', v:'calendar' },
     { sep:true, title:'시스템' },
     { icon:'⚙', label:'설정', v:'settings' }
   ];
@@ -1340,6 +1344,75 @@ function renderWorkStatus(){
     <div style="font-size:14px;font-weight:600;color:var(--success);margin-bottom:4px">미완료 업무가 없습니다</div>
     <div style="font-size:12.5px;color:var(--muted)">프로젝트 업무등록에서 하위 업무를 추가하세요</div>
   </div>`:''}
+</div>`;
+}
+
+// ── 마감 캘린더 — 단계 마감일·업무 마감일·준공 목표 월별 보기 ──
+const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981'};
+function calEventsAll(){
+  const map={};
+  const add=(date,ev)=>{ if(!date) return; (map[date]=map[date]||[]).push(ev); };
+  D.projects.filter(p=>p.status==='진행중').forEach(p=>{
+    PHASES.forEach(ph=>{
+      const dl=p.phaseDeadlines?.[ph];
+      if(dl) add(dl,{t:'phase',pid:p.id,pname:p.name,label:`${ph} 단계 마감`});
+      (D.phaseTasks?.[p.id]?.[ph]||[]).forEach(tk=>{
+        if(tk.dueDate) add(tk.dueDate,{t:'task',pid:p.id,pname:p.name,label:tk.text,done:tk.done});
+        (tk.subTasks||[]).forEach(s=>{ if(s.dueDate) add(s.dueDate,{t:'task',pid:p.id,pname:p.name,label:s.text,done:s.done}); });
+      });
+    });
+    if(p.end) add(p.end,{t:'end',pid:p.id,pname:p.name,label:'준공 목표'});
+  });
+  return map;
+}
+function calShiftD(n){
+  const [y,m]=(S.calYm||today().slice(0,7)).split('-').map(Number);
+  const d=new Date(y,m-1+n,1);
+  S.calYm=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  render();
+}
+function renderCalendarView(){
+  const t=today();
+  const ym=S.calYm||t.slice(0,7); S.calYm=ym;
+  const [y,m]=ym.split('-').map(Number);
+  const events=calEventsAll();
+  const startDow=new Date(y,m-1,1).getDay();
+  const daysIn=new Date(y,m,0).getDate();
+
+  const dows=['일','월','화','수','목','금','토'].map((d,i)=>
+    `<div style="text-align:center;font-size:12px;font-weight:700;padding:6px 0;color:${i===0?'#ef4444':i===6?'#3b82f6':'var(--muted)'}">${d}</div>`).join('');
+  let cells='';
+  for(let i=0;i<startDow;i++) cells+='<div></div>';
+  for(let d=1;d<=daysIn;d++){
+    const ds=`${ym}-${String(d).padStart(2,'0')}`;
+    const evs=events[ds]||[];
+    const dow=(startDow+d-1)%7;
+    const isToday=ds===t;
+    const chips=evs.slice(0,3).map(e=>`
+<div onclick="go('detail','${e.pid}','schedule')" title="${e.pname} — ${e.label}"
+  style="font-size:11px;padding:2px 6px;border-radius:4px;margin-top:3px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  background:${CAL_COLORS[e.t]}18;border-left:3px solid ${CAL_COLORS[e.t]};${e.done?'text-decoration:line-through;opacity:.55':''}">
+  ${e.label}<span style="color:var(--muted)"> · ${e.pname}</span></div>`).join('');
+    const more=evs.length>3?`<div style="font-size:10.5px;color:var(--muted);margin-top:2px">+${evs.length-3}건 더</div>`:'';
+    cells+=`<div style="min-height:96px;border:1px solid var(--bd);border-radius:8px;padding:6px 7px;background:${isToday?'#eff6ff':'#fff'};${isToday?'border-color:var(--pr);border-width:1.5px;':''}">
+      <div style="font-size:12.5px;font-weight:600;color:${dow===0?'#ef4444':dow===6?'#3b82f6':'var(--tx)'}">${d}</div>
+      ${chips}${more}</div>`;
+  }
+
+  return `
+<div class="card" style="max-width:1100px">
+  <div style="display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:12px">
+    <button class="btn bs bsm" onclick="calShiftD(-1)">‹ 이전 달</button>
+    <span style="font-size:17px;font-weight:700;min-width:120px;text-align:center">${y}년 ${m}월</span>
+    <button class="btn bs bsm" onclick="calShiftD(1)">다음 달 ›</button>
+    <button class="btn bg bsm" onclick="S.calYm=null;render()">오늘</button>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">${dows}${cells}</div>
+  <div style="display:flex;gap:16px;justify-content:center;margin-top:12px;font-size:12px;color:var(--muted)">
+    <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${CAL_COLORS.phase}"></i> 단계 마감</span>
+    <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${CAL_COLORS.task}"></i> 업무 마감</span>
+    <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${CAL_COLORS.end}"></i> 준공 목표</span>
+  </div>
 </div>`;
 }
 

@@ -106,6 +106,27 @@ input:focus,select:focus{outline:none;border-color:var(--pr)!important;box-shado
 .back-btn{background:none;border:none;color:var(--pr);font-size:14px;font-weight:600;padding:2px 0;margin-bottom:10px;display:inline-flex;align-items:center;gap:4px}
 select.pm-sel{padding:9px 12px;border:1px solid var(--bd);border-radius:8px;background:#fff;width:100%}
 
+/* ── 캘린더 ── */
+.cal-head{display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:10px}
+.cal-head button{background:none;border:none;font-size:18px;color:var(--pr);padding:4px 12px;font-weight:700}
+.cal-head .ym{font-size:16px;font-weight:700;min-width:110px;text-align:center}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.cal-dow{text-align:center;font-size:11px;font-weight:700;color:var(--muted);padding:3px 0}
+.cal-dow.sun{color:#ef4444}.cal-dow.sat{color:#3b82f6}
+.cal-day{min-height:46px;border-radius:7px;border:1px solid var(--bd);background:#fff;padding:3px 2px 2px;text-align:center;cursor:pointer}
+.cal-day.blank{border:none;background:transparent;cursor:default}
+.cal-day.today{border-color:var(--pr);border-width:1.5px}
+.cal-day.sel{background:#eff6ff;border-color:var(--pr)}
+.cal-day .dn{font-size:12px;font-weight:600}
+.cal-day.sun .dn{color:#ef4444}.cal-day.sat .dn{color:#3b82f6}
+.cal-dots{display:flex;gap:2px;justify-content:center;flex-wrap:wrap;margin-top:2px}
+.cal-dots .dot{width:6px;height:6px;border-radius:50%}
+.cal-ev{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:#fff;border:1px solid var(--bd);margin-bottom:5px}
+.cal-ev .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.cal-legend{display:flex;gap:12px;justify-content:center;margin:8px 0 2px;font-size:11px;color:var(--muted)}
+.cal-legend span{display:inline-flex;align-items:center;gap:4px}
+.cal-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+
 /* ── 단계별 마감일 메뉴 ── */
 .dl-row{display:flex;align-items:center;gap:9px;padding:10px 2px;border-bottom:1px solid var(--bd)}
 .dl-row:last-of-type{border-bottom:none}
@@ -175,7 +196,7 @@ const PM_KEY = 'archpm_pm_name';
 let D = null;            // 로드 전에는 null — 저장 금지 (빈 데이터로 덮어쓰기 방지)
 let fbAuth=null, fbDb=null, _unsub=null, _saving=false, _userDoc=null;
 // V: 화면 상태
-let V = { screen:'home', pid:null, openPhase:null, showAll:false, addOpen:null, subOpen:null };
+let V = { screen:'home', pid:null, openPhase:null, showAll:false, addOpen:null, subOpen:null, calYm:null, calSel:null, calMine:true };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function today(){ return new Date().toISOString().split('T')[0]; }
@@ -287,6 +308,7 @@ function render(){
   c.innerHTML = V.screen==='proj'&&V.pid ? renderProj(V.pid)
     : V.screen==='deadlines'&&V.pid ? renderDeadlines(V.pid)
     : (V.screen==='new'||V.screen==='edit') ? renderProjForm()
+    : V.screen==='cal' ? renderCal()
     : renderHome();
 }
 
@@ -312,7 +334,8 @@ function renderHome(){
     ${names.map(n=>`<option value="${esc(n)}" ${n===pm?'selected':''}>${esc(n)}</option>`).join('')}
   </select>
 </div>`;
-  if(!pm) return pmSel+`<div class="empty">담당 PM을 선택하면<br>내 프로젝트가 표시됩니다.</div>`;
+  const calBtn=`<button class="open-add" style="margin:0 0 10px" onclick="go('cal')">📅 마감 캘린더</button>`;
+  if(!pm) return pmSel+calBtn+`<div class="empty">담당 PM을 선택하면<br>내 프로젝트가 표시됩니다.</div>`;
 
   const mine=(D.projects||[]).filter(p=>(p.pm||'').trim()===pm);
   const others=(D.projects||[]).filter(p=>(p.pm||'').trim()!==pm);
@@ -335,7 +358,7 @@ function renderHome(){
 </button>`;
   };
 
-  return pmSel
+  return pmSel+calBtn
     +`<div class="sec-title">내 프로젝트 (${mine.length})</div>`
     +(mine.length?mine.map(projCard).join(''):`<div class="empty">'${esc(pm)}' 담당 프로젝트가 없습니다.</div>`)
     +`<button class="open-add" onclick="go('new')">＋ 새 프로젝트 등록</button>`
@@ -590,6 +613,93 @@ function setPhaseDeadline(pid,idx,newDate){
     }
   }
   save(); render();
+}
+
+// ── 마감 캘린더 ──────────────────────────────────────────
+const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981'};
+// 날짜 → 이벤트 목록: 단계 마감일 / 업무·하위업무 마감일 / 준공 목표
+function calEvents(mineOnly){
+  const map={};
+  const add=(date,ev)=>{ if(!date) return; (map[date]=map[date]||[]).push(ev); };
+  const pm=myPm();
+  (D.projects||[]).filter(p=>p.status==='진행중')
+    .filter(p=>!mineOnly||!pm||(p.pm||'').trim()===pm)
+    .forEach(p=>{
+      PHASES.forEach(ph=>{
+        const dl=p.phaseDeadlines?.[ph];
+        if(dl) add(dl,{t:'phase',pid:p.id,pname:p.name,label:`${ph} 단계 마감`});
+        (D.phaseTasks?.[p.id]?.[ph]||[]).forEach(tk=>{
+          if(tk.dueDate) add(tk.dueDate,{t:'task',pid:p.id,pname:p.name,label:tk.text,done:tk.done});
+          (tk.subTasks||[]).forEach(s=>{ if(s.dueDate) add(s.dueDate,{t:'task',pid:p.id,pname:p.name,label:s.text,done:s.done}); });
+        });
+      });
+      if(p.end) add(p.end,{t:'end',pid:p.id,pname:p.name,label:'준공 목표'});
+    });
+  return map;
+}
+function calShift(n){
+  const [y,m]=(V.calYm||today().slice(0,7)).split('-').map(Number);
+  const d=new Date(y,m-1+n,1);
+  V.calYm=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  V.calSel=null; render();
+}
+function renderCal(){
+  const t=today();
+  const ym=V.calYm||t.slice(0,7); V.calYm=ym;
+  const [y,m]=ym.split('-').map(Number);
+  const events=calEvents(V.calMine);
+  const startDow=new Date(y,m-1,1).getDay();
+  const daysIn=new Date(y,m,0).getDate();
+  const sel=V.calSel||(t.slice(0,7)===ym?t:null);
+
+  const dows=['일','월','화','수','목','금','토'].map((d,i)=>
+    `<div class="cal-dow ${i===0?'sun':i===6?'sat':''}">${d}</div>`).join('');
+  let cells='';
+  for(let i=0;i<startDow;i++) cells+='<div class="cal-day blank"></div>';
+  for(let d=1;d<=daysIn;d++){
+    const ds=`${ym}-${String(d).padStart(2,'0')}`;
+    const evs=events[ds]||[];
+    const dow=(startDow+d-1)%7;
+    // 점 표시: 완료된 업무는 제외, 유형별 1개씩 최대 3개
+    const types=[...new Set(evs.filter(e=>!(e.t==='task'&&e.done)).map(e=>e.t))];
+    const dots=types.slice(0,3).map(tp=>`<span class="dot" style="background:${CAL_COLORS[tp]}"></span>`).join('');
+    cells+=`<div class="cal-day ${ds===t?'today':''} ${ds===sel?'sel':''} ${dow===0?'sun':dow===6?'sat':''}"
+      onclick="V.calSel='${ds}';render()">
+      <div class="dn">${d}</div><div class="cal-dots">${dots}</div></div>`;
+  }
+
+  const selEvs=sel?(events[sel]||[]):[];
+  const selList=sel?`
+<div class="sec-title">${Number(sel.slice(5,7))}월 ${Number(sel.slice(8))}일 마감 (${selEvs.length})</div>
+${selEvs.length?selEvs.map(e=>`
+<div class="cal-ev" onclick="go('proj','${e.pid}')">
+  <span class="dot" style="background:${CAL_COLORS[e.t]}"></span>
+  <div style="flex:1;min-width:0">
+    <div style="font-size:13.5px;${e.done?'text-decoration:line-through;color:var(--muted)':''}">${esc(e.label)}</div>
+    <div style="font-size:11px;color:var(--muted)">${esc(e.pname)}</div>
+  </div>
+  ${e.done?'<span style="font-size:11px;color:var(--success);font-weight:600">✓</span>':''}
+</div>`).join(''):'<div class="empty" style="padding:16px">마감 일정이 없습니다.</div>'}`:'';
+
+  return `
+<button class="back-btn" onclick="go('home')">‹ 내 프로젝트</button>
+<div class="card">
+  <div class="cal-head">
+    <button onclick="calShift(-1)">‹</button>
+    <span class="ym">${y}년 ${m}월</span>
+    <button onclick="calShift(1)">›</button>
+  </div>
+  <div style="text-align:center;margin-bottom:8px">
+    <button class="chip ${V.calMine?'on':''}" onclick="V.calMine=!V.calMine;render()">${V.calMine?'내 프로젝트만 ✓':'전체 프로젝트'}</button>
+  </div>
+  <div class="cal-grid">${dows}${cells}</div>
+  <div class="cal-legend">
+    <span><i style="background:${CAL_COLORS.phase}"></i>단계 마감</span>
+    <span><i style="background:${CAL_COLORS.task}"></i>업무 마감</span>
+    <span><i style="background:${CAL_COLORS.end}"></i>준공 목표</span>
+  </div>
+</div>
+${selList}`;
 }
 
 // ── 프로젝트 등록/수정 폼 (신규·편집 공용) ────────────────
