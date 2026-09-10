@@ -106,6 +106,13 @@ input:focus,select:focus{outline:none;border-color:var(--pr)!important;box-shado
 .back-btn{background:none;border:none;color:var(--pr);font-size:14px;font-weight:600;padding:2px 0;margin-bottom:10px;display:inline-flex;align-items:center;gap:4px}
 select.pm-sel{padding:9px 12px;border:1px solid var(--bd);border-radius:8px;background:#fff;width:100%}
 
+/* ── 단계별 마감일 메뉴 ── */
+.dl-row{display:flex;align-items:center;gap:9px;padding:10px 2px;border-bottom:1px solid var(--bd)}
+.dl-row:last-of-type{border-bottom:none}
+.dl-row.cur{background:#eff6ff;border-radius:8px;padding:10px 8px;margin:0 -6px;border-bottom:none}
+.dl-info{width:92px;flex-shrink:0}
+.dl-row input[type=date]{flex:1;padding:8px 9px;border:1px solid var(--bd);border-radius:7px;font-size:13px;background:#fff;min-width:110px}
+
 /* ── 새 프로젝트 폼 ── */
 .np-field{margin-bottom:12px}
 .np-field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px}
@@ -270,7 +277,10 @@ function render(){
   if(!D) return;
   document.getElementById('hdr-pm').textContent=myPm()?('PM · '+myPm()):'PM 미선택';
   const c=document.getElementById('content');
-  c.innerHTML = V.screen==='proj'&&V.pid ? renderProj(V.pid) : (V.screen==='new'||V.screen==='edit') ? renderProjForm() : renderHome();
+  c.innerHTML = V.screen==='proj'&&V.pid ? renderProj(V.pid)
+    : V.screen==='deadlines'&&V.pid ? renderDeadlines(V.pid)
+    : (V.screen==='new'||V.screen==='edit') ? renderProjForm()
+    : renderHome();
 }
 
 function taskCount(pid){
@@ -351,7 +361,8 @@ function renderProj(pid){
 <div class="card">
   <div style="display:flex;align-items:flex-start;gap:10px">
     <div class="proj-name" style="font-size:17px;flex:1">${esc(p.name)}</div>
-    <button onclick="go('edit','${pid}')" style="flex-shrink:0;background:#eff6ff;color:var(--pr);border:1px solid #bfdbfe;border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:600">✎ 수정</button>
+    <button onclick="go('deadlines','${pid}')" style="flex-shrink:0;background:#eff6ff;color:var(--pr);border:1px solid #bfdbfe;border-radius:8px;padding:6px 11px;font-size:12.5px;font-weight:600">📅 마감일</button>
+    <button onclick="go('edit','${pid}')" style="flex-shrink:0;background:#eff6ff;color:var(--pr);border:1px solid #bfdbfe;border-radius:8px;padding:6px 11px;font-size:12.5px;font-weight:600">✎ 수정</button>
   </div>
   <div class="proj-meta">
     <span class="badge b-bl">${esc(curPhase)}</span>
@@ -450,6 +461,61 @@ function renderPhaseSec(pid,phase,isOpen,isCur){
     ${rows||'<div style="font-size:13px;color:var(--muted);padding:2px 0 4px">등록된 업무가 없습니다.</div>'}
     ${addForm}
   </div></div>`;
+}
+
+// ── 단계별 마감일 메뉴 (프로젝트 현황의 단계 일정표 모바일 버전) ──
+function renderDeadlines(pid){
+  const p=(D.projects||[]).find(x=>x.id===pid);
+  if(!p) return '<div class="empty">프로젝트를 찾을 수 없습니다.</div>';
+  const dls=p.phaseDeadlines||{}, ratios=p.phaseRatios||{};
+  const totalRatio=PHASES.reduce((s,ph)=>s+(ratios[ph]||0),0);
+  const t=today();
+  let prev=p.contract||'';
+  const rows=PHASES.map((ph,i)=>{
+    const dl=dls[ph]||'';
+    let dd='-',ddColor='var(--muted)';
+    if(dl){
+      const d=Math.round((new Date(dl)-new Date(t))/864e5);
+      if(d<0){dd=`D+${-d}`;ddColor='#b91c1c';}
+      else if(d===0){dd='오늘';ddColor='#1d4ed8';}
+      else{dd=`D-${d}`;ddColor=d<=7?'#b45309':'var(--muted)';}
+    }
+    const days=(dl&&prev)?Math.round((new Date(dl)-new Date(prev))/864e5):0;
+    if(dl) prev=dl;
+    const ratio=ratios[ph]!==undefined?Math.round(ratios[ph]):null;
+    return `
+<div class="dl-row ${p.phase===ph?'cur':''}">
+  <div class="dl-info">
+    <div style="font-weight:700;font-size:13.5px">${ph}${p.phase===ph?' <span style="font-size:9.5px;color:var(--pr)">●</span>':''}</div>
+    <div style="font-size:10.5px;color:var(--muted)">${ratio!==null?ratio+'%':'-'} · ${days>0?days+'일':'-'}</div>
+  </div>
+  <input type="date" value="${dl}" onchange="setPhaseDeadline('${pid}',${i},this.value)">
+  <span style="font-size:12px;font-weight:700;color:${ddColor};width:46px;text-align:right;flex-shrink:0">${dd}</span>
+</div>`;
+  }).join('');
+  const needDates=!p.contract||!p.end;
+  return `
+<button class="back-btn" onclick="go('proj','${pid}')">‹ ${esc(p.name)}</button>
+<div class="card">
+  <div style="font-size:16px;font-weight:700;margin-bottom:3px">📅 단계별 마감일</div>
+  <div style="font-size:12px;color:var(--muted);margin-bottom:10px">
+    계약 ${p.contract||'-'} ~ 준공 ${p.end||'-'} ·
+    비율 합계 <b style="color:${Math.abs(totalRatio-100)<1?'var(--success)':'var(--danger)'}">${Math.round(totalRatio)}%</b>
+  </div>
+  ${needDates?`<div style="font-size:12px;color:#b45309;background:#fef3c7;border-radius:7px;padding:8px 11px;margin-bottom:8px">계약일·준공 목표가 없으면 비율 연동 없이 마감일만 저장됩니다. <a onclick="go('edit','${pid}')" style="color:var(--pr);font-weight:600;text-decoration:underline;cursor:pointer">프로젝트 수정</a></div>`:''}
+  ${rows}
+  <button class="open-add" onclick="applyDefaultRatiosPm('${pid}')">기본 비율(5·15·20·30·25·5%)로 자동 배분</button>
+</div>
+<div class="np-note">마감일을 바꾸면 해당 단계 비율이 재계산되고<br>다음 단계 비율이 조정되어 합계 100%가 유지됩니다.</div>`;
+}
+// 기본 비율로 초기화 후 마감일 재계산 (데스크톱 applyDefaultRatios와 동일)
+function applyDefaultRatiosPm(pid){
+  const p=(D.projects||[]).find(x=>x.id===pid); if(!p) return;
+  if(!p.contract||!p.end){ alert('계약일과 준공 목표를 먼저 입력하세요. (✎ 수정)'); return; }
+  if(!confirm('기존 비율·마감일을 기본 비율 기준으로 다시 계산합니다. 계속할까요?')) return;
+  p.phaseRatios={...DEFAULT_PHASE_RATIOS};
+  recomputeDeadlinesData(p);
+  save(); render();
 }
 
 // ── 단계 마감일 수정 (데스크톱 프로젝트 현황 onDeadlineChange와 동일 로직) ──
