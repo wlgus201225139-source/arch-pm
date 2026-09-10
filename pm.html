@@ -57,7 +57,12 @@ input:focus,select:focus{outline:none;border-color:var(--pr)!important;box-shado
 /* ── 단계 섹션 (드롭다운 아코디언) ── */
 .ph-sec{background:var(--w);border-radius:var(--r);box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:9px;overflow:hidden;border:1.5px solid transparent}
 .ph-sec:has(.ph-head.open){border-color:var(--pr)}
-.ph-head{display:flex;align-items:center;gap:9px;padding:13px 15px;border:none;background:none;width:100%;text-align:left}
+.ph-head{display:block;padding:11px 15px 12px;border:none;background:none;width:100%;text-align:left}
+.ph-due{font-size:11.5px;font-weight:600;margin-bottom:5px}
+.ph-head-row{display:flex;align-items:center;gap:9px}
+.due-edit{display:flex;align-items:center;gap:9px;padding:9px 11px;background:#f8fafc;border:1px solid var(--bd);border-radius:8px;margin-bottom:11px}
+.due-edit label{font-size:12.5px;font-weight:700;color:var(--tx);white-space:nowrap}
+.due-edit input[type=date]{flex:1;padding:7px 10px;border:1px solid var(--bd);border-radius:7px;font-size:13.5px;background:#fff;min-width:120px}
 .ph-head .arrow{font-size:11px;color:var(--muted);transition:transform .15s}
 .ph-head.open .arrow{transform:rotate(90deg)}
 .ph-body{padding:0 15px 15px;border-top:1px solid var(--bd);padding-top:12px}
@@ -157,6 +162,7 @@ const FB_CONFIG = {
   measurementId: "G-PPFL1JLJMT"
 };
 const PHASES = ['기획','계획설계','기본설계','중간설계','실시설계','허가'];
+const DEFAULT_PHASE_RATIOS = {'기획':5,'계획설계':15,'기본설계':20,'중간설계':30,'실시설계':25,'허가':5};
 const PM_KEY = 'archpm_pm_name';
 
 let D = null;            // 로드 전에는 null — 저장 금지 (빈 데이터로 덮어쓰기 방지)
@@ -353,17 +359,34 @@ function renderProj(pid){
 ${PHASES.map(ph=>renderPhaseSec(pid,ph,ph===open,ph===curPhase)).join('')}`;
 }
 
+function phaseDueLine(dl){
+  if(!dl) return '';
+  const t=today();
+  const d=Math.round((new Date(dl)-new Date(t))/864e5);
+  let label,color;
+  if(d<0){ label=`D+${Math.abs(d)} 초과`; color='#b91c1c'; }
+  else if(d===0){ label='오늘 마감'; color='#1d4ed8'; }
+  else if(d<=7){ label=`D-${d}`; color='#b45309'; }
+  else{ label=`D-${d}`; color='var(--muted)'; }
+  return `<div class="ph-due" style="color:${color}">📅 단계 마감 ${dl} · ${label}</div>`;
+}
 function renderPhaseSec(pid,phase,isOpen,isCur){
+  const p=(D.projects||[]).find(x=>x.id===pid)||{};
+  const dl=p.phaseDeadlines?.[phase]||'';
+  const idx=PHASES.indexOf(phase);
   const tasks=D.phaseTasks?.[pid]?.[phase]||[];
   const done=tasks.filter(t=>t.done).length;
   // 펼쳐진 박스를 다시 탭하면 접힘, 다른 박스를 탭하면 그 박스만 펼쳐짐
   const head=`
 <button class="ph-head ${isOpen?'open':''}" onclick="V.openPhase=${isOpen?"''":`'${phase}'`};V.addOpen=null;V.subOpen=null;render()">
-  <span class="arrow">▶</span>
-  <span style="font-weight:700;font-size:14.5px">${phase}</span>
-  ${isCur?'<span class="badge b-bl" style="font-size:10px">현재 단계</span>':''}
-  ${tasks.length&&done===tasks.length?'<span class="badge b-gr" style="font-size:10px">✓ 완료</span>':''}
-  <span class="ph-stat" style="margin-left:auto">${tasks.length?`${done}/${tasks.length}`:'업무 없음'}</span>
+  ${phaseDueLine(dl)}
+  <div class="ph-head-row">
+    <span class="arrow">▶</span>
+    <span style="font-weight:700;font-size:14.5px">${phase}</span>
+    ${isCur?'<span class="badge b-bl" style="font-size:10px">현재 단계</span>':''}
+    ${tasks.length&&done===tasks.length?'<span class="badge b-gr" style="font-size:10px">✓ 완료</span>':''}
+    <span class="ph-stat" style="margin-left:auto">${tasks.length?`${done}/${tasks.length}`:'업무 없음'}</span>
+  </div>
 </button>`;
   if(!isOpen) return `<div class="ph-sec">${head}</div>`;
 
@@ -416,9 +439,46 @@ function renderPhaseSec(pid,phase,isOpen,isCur){
   :`<button class="open-add" onclick="V.addOpen='${phase}';V.subOpen=null;render();focusEl('tk-text')">＋ 업무 추가</button>`;
 
   return `<div class="ph-sec">${head}<div class="ph-body">
+    <div class="due-edit">
+      <label>단계 마감일</label>
+      <input type="date" value="${dl}" onchange="setPhaseDeadline('${pid}',${idx},this.value)">
+    </div>
     ${rows||'<div style="font-size:13px;color:var(--muted);padding:2px 0 4px">등록된 업무가 없습니다.</div>'}
     ${addForm}
   </div></div>`;
+}
+
+// ── 단계 마감일 수정 (데스크톱 프로젝트 현황 onDeadlineChange와 동일 로직) ──
+// 마감일 변경 시 해당 단계 비율을 재계산하고, 다음 단계(마지막이면 이전 단계)
+// 비율을 역산해 합계 100%를 유지한다.
+function setPhaseDeadline(pid,idx,newDate){
+  const p=(D.projects||[]).find(x=>x.id===pid); if(!p) return;
+  const cVal=p.contract||'', eVal=p.end||'';
+  if(!p.phaseDeadlines) p.phaseDeadlines={};
+  if(!p.phaseRatios) p.phaseRatios={};
+  const ph=PHASES[idx];
+  if(!newDate){ delete p.phaseDeadlines[ph]; save(); render(); return; }
+  p.phaseDeadlines[ph]=newDate;
+  const start=cVal?new Date(cVal):null;
+  const totalDays=(cVal&&eVal)?(new Date(eVal)-start)/86400000:0;
+  if(totalDays>0){
+    const prevDl=idx>0?(p.phaseDeadlines[PHASES[idx-1]]||cVal):cVal;
+    const newRatio=Math.round((new Date(newDate)-new Date(prevDl))/86400000/totalDays*100);
+    p.phaseRatios[ph]=newRatio;
+    const isLast=idx===PHASES.length-1;
+    const adjIdx=isLast?idx-1:idx+1;
+    if(adjIdx>=0&&adjIdx<PHASES.length){
+      const adjPh=PHASES[adjIdx];
+      if(isLast||p.phaseDeadlines[adjPh]){
+        const sumOthers=PHASES.reduce((s,phase,j)=>{
+          if(j===idx||j===adjIdx) return s;
+          return s+(p.phaseRatios[phase]!==undefined?p.phaseRatios[phase]:(DEFAULT_PHASE_RATIOS[phase]||0));
+        },0);
+        p.phaseRatios[adjPh]=Math.max(0,Math.round(100-sumOthers-newRatio));
+      }
+    }
+  }
+  save(); render();
 }
 
 // ── 새 프로젝트 등록 ─────────────────────────────────────
