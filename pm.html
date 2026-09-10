@@ -270,7 +270,7 @@ function render(){
   if(!D) return;
   document.getElementById('hdr-pm').textContent=myPm()?('PM · '+myPm()):'PM 미선택';
   const c=document.getElementById('content');
-  c.innerHTML = V.screen==='proj'&&V.pid ? renderProj(V.pid) : V.screen==='new' ? renderNewProj() : renderHome();
+  c.innerHTML = V.screen==='proj'&&V.pid ? renderProj(V.pid) : (V.screen==='new'||V.screen==='edit') ? renderProjForm() : renderHome();
 }
 
 function taskCount(pid){
@@ -349,11 +349,15 @@ function renderProj(pid){
   return `
 <button class="back-btn" onclick="go('home')">‹ 내 프로젝트</button>
 <div class="card">
-  <div class="proj-name" style="font-size:17px">${esc(p.name)}</div>
+  <div style="display:flex;align-items:flex-start;gap:10px">
+    <div class="proj-name" style="font-size:17px;flex:1">${esc(p.name)}</div>
+    <button onclick="go('edit','${pid}')" style="flex-shrink:0;background:#eff6ff;color:var(--pr);border:1px solid #bfdbfe;border-radius:8px;padding:6px 12px;font-size:12.5px;font-weight:600">✎ 수정</button>
+  </div>
   <div class="proj-meta">
     <span class="badge b-bl">${esc(curPhase)}</span>
     <span class="badge ${p.status==='진행중'?'b-gr':'b-gy'}">${esc(p.status||'-')}</span>
     ${p.client?`<span>🏢 ${esc(p.client)}</span>`:''}
+    ${p.end?`<span>🏁 준공 ${esc(p.end)}</span>`:''}
   </div>
 </div>
 ${PHASES.map(ph=>renderPhaseSec(pid,ph,ph===open,ph===curPhase)).join('')}`;
@@ -481,58 +485,93 @@ function setPhaseDeadline(pid,idx,newDate){
   save(); render();
 }
 
-// ── 새 프로젝트 등록 ─────────────────────────────────────
-function renderNewProj(){
+// ── 프로젝트 등록/수정 폼 (신규·편집 공용) ────────────────
+function renderProjForm(){
+  const isEdit=V.screen==='edit';
+  const p=isEdit?((D.projects||[]).find(x=>x.id===V.pid)||{}):{};
   const types=['업무시설','근린생활시설','단독주택','공동주택','교육시설','의료시설','기타'];
+  const statuses=['진행중','보류','완료','대기'];
+  const backClick=isEdit?`go('proj','${V.pid}')`:`go('home')`;
   return `
-<button class="back-btn" onclick="go('home')">‹ 내 프로젝트</button>
+<button class="back-btn" onclick="${backClick}">‹ ${isEdit?'프로젝트':'내 프로젝트'}</button>
 <div class="card">
-  <div style="font-size:16.5px;font-weight:700;margin-bottom:14px">새 프로젝트 등록</div>
+  <div style="font-size:16.5px;font-weight:700;margin-bottom:14px">${isEdit?'프로젝트 현황 수정':'새 프로젝트 등록'}</div>
   <div class="np-field"><label>프로젝트명 <span class="req">*</span></label>
-    <input type="text" id="np-name" placeholder="예: 역삼동 업무시설 신축"></div>
+    <input type="text" id="np-name" value="${esc(p.name||'')}" placeholder="예: 역삼동 업무시설 신축"></div>
   <div class="np-field"><label>건축주 <span class="req">*</span></label>
-    <input type="text" id="np-client" placeholder="건축주명 또는 법인명"></div>
+    <input type="text" id="np-client" value="${esc(p.client||'')}" placeholder="건축주명 또는 법인명"></div>
   <div class="np-field"><label>담당 PM</label>
-    <input type="text" id="np-pm" value="${esc(myPm())}" placeholder="담당자 이름"></div>
+    <input type="text" id="np-pm" value="${esc(isEdit?(p.pm||''):myPm())}" placeholder="담당자 이름"></div>
+  <div class="np-row">
+    <div class="np-field"><label>진행 상태</label>
+      <select id="np-status">${statuses.map(s=>`<option${(p.status||'진행중')===s?' selected':''}>${s}</option>`).join('')}</select></div>
+    <div class="np-field"><label>현재 단계</label>
+      <select id="np-phase">${PHASES.map(ph=>`<option${(p.phase||'기획')===ph?' selected':''}>${ph}</option>`).join('')}</select></div>
+  </div>
   <div class="np-row">
     <div class="np-field"><label>용도</label>
-      <select id="np-type">${types.map(t=>`<option>${t}</option>`).join('')}</select></div>
-    <div class="np-field"><label>현재 단계</label>
-      <select id="np-phase">${PHASES.map(ph=>`<option>${ph}</option>`).join('')}</select></div>
+      <select id="np-type">${types.map(t=>`<option${(p.type||'업무시설')===t?' selected':''}>${t}</option>`).join('')}</select></div>
+    <div class="np-field"><label>사업비</label>
+      <input type="text" id="np-budget" value="${esc(p.budget||'')}" placeholder="예: 45억"></div>
   </div>
   <div class="np-field"><label>주소</label>
-    <input type="text" id="np-addr" placeholder="대지 주소"></div>
+    <input type="text" id="np-addr" value="${esc(p.addr||'')}" placeholder="대지 주소"></div>
   <div class="np-row">
     <div class="np-field"><label>계약일</label>
-      <input type="date" id="np-contract" value="${today()}"></div>
+      <input type="date" id="np-contract" value="${p.contract||(isEdit?'':today())}"></div>
     <div class="np-field"><label>준공 목표</label>
-      <input type="date" id="np-end"></div>
+      <input type="date" id="np-end" value="${p.end||''}"></div>
   </div>
   <div class="form-btns" style="margin-top:4px">
-    <button class="add" onclick="addProject()">프로젝트 등록</button>
-    <button class="cancel" onclick="go('home')">취소</button>
+    <button class="add" onclick="saveProjForm()">${isEdit?'저장':'프로젝트 등록'}</button>
+    <button class="cancel" onclick="${backClick}">취소</button>
   </div>
 </div>
-<div class="np-note">사업비·면적·규모 등 상세 정보는<br>데스크톱 ArchPM의 프로젝트 편집에서 입력할 수 있습니다.</div>`;
+<div class="np-note">면적·규모 등 상세 정보는<br>데스크톱 ArchPM의 프로젝트 편집에서 입력할 수 있습니다.</div>`;
 }
-function addProject(){
+
+// 계약일·준공 목표 변경 시 비율(phaseRatios)을 유지한 채 단계 마감일 재계산
+// (데스크톱 recomputeDeadlines의 데이터 부분과 동일)
+function recomputeDeadlinesData(p){
+  if(!p.phaseRatios||!p.contract||!p.end) return;
+  const start=new Date(p.contract);
+  const totalDays=(new Date(p.end)-start)/86400000;
+  if(totalDays<=0) return;
+  if(!p.phaseDeadlines) p.phaseDeadlines={};
+  let cum=0;
+  PHASES.forEach(ph=>{
+    const v=p.phaseRatios[ph]||0; cum+=v;
+    if(v>0) p.phaseDeadlines[ph]=new Date(start.getTime()+(cum/100)*totalDays*86400000).toISOString().split('T')[0];
+    else delete p.phaseDeadlines[ph];
+  });
+}
+
+function saveProjForm(){
   const gv=id=>(document.getElementById(id)?.value||'').trim();
   const name=gv('np-name'), client=gv('np-client');
   if(!name){ alert('프로젝트명을 입력하세요. (필수)'); focusEl('np-name'); return; }
   if(!client){ alert('건축주를 입력하세요. (필수)'); focusEl('np-client'); return; }
-  if(!D.projects) D.projects=[];
-  const id=uid();
-  // 데스크톱 saveProject와 동일한 필드 구조로 저장
-  D.projects.push({
-    id, created:today(), name, client, pm:gv('np-pm'), type:gv('np-type'),
-    status:'진행중', phase:gv('np-phase'), addr:gv('np-addr'), budget:'',
-    contract:gv('np-contract'), design:'', permit:'', start:'', end:gv('np-end'),
-    land:'', bldg:'', total:'', floors:'', desc:''
-  });
-  // PM 미선택 상태에서 등록했다면 입력한 PM을 내 PM으로 기억
-  if(gv('np-pm')&&!localStorage.getItem(PM_KEY)) localStorage.setItem(PM_KEY,gv('np-pm'));
-  save();
-  go('proj',id);   // 등록 직후 바로 업무 입력 화면으로
+  const fields={ name, client, pm:gv('np-pm'), status:gv('np-status'), phase:gv('np-phase'),
+    type:gv('np-type'), budget:gv('np-budget'), addr:gv('np-addr'), contract:gv('np-contract'), end:gv('np-end') };
+  if(V.screen==='edit'){
+    const p=(D.projects||[]).find(x=>x.id===V.pid);
+    if(!p){ alert('프로젝트를 찾을 수 없습니다.'); go('home'); return; }
+    const datesChanged=p.contract!==fields.contract||p.end!==fields.end;
+    Object.assign(p,fields);
+    if(datesChanged) recomputeDeadlinesData(p);
+    save();
+    go('proj',V.pid);
+  } else {
+    if(!D.projects) D.projects=[];
+    const id=uid();
+    // 데스크톱 saveProject와 동일한 필드 구조로 저장
+    D.projects.push({ id, created:today(), ...fields,
+      design:'', permit:'', start:'', land:'', bldg:'', total:'', floors:'', desc:'' });
+    // PM 미선택 상태에서 등록했다면 입력한 PM을 내 PM으로 기억
+    if(fields.pm&&!localStorage.getItem(PM_KEY)) localStorage.setItem(PM_KEY,fields.pm);
+    save();
+    go('proj',id);   // 등록 직후 바로 업무 입력 화면으로
+  }
 }
 
 function quickChips(inputId){
