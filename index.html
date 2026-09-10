@@ -1385,48 +1385,7 @@ function renderWorkStatus(){
 }
 
 // ── 마감 캘린더 — 단계 마감일·업무 마감일·준공 목표 월별 보기 ──
-const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981',gcal:'#8b5cf6'};
-
-// 구글 캘린더(iCal) 연동 — D.gcalCals는 PM 앱 캘린더 화면에서 등록, /api/gcal 프록시로 로드
-let GCAL={key:'',events:null,loading:false};
-function parseIcs(text){
-  const events=[];
-  const lines=String(text||'').replace(/\r/g,'').replace(/\n[ \t]/g,'').split('\n');
-  let cur=null;
-  for(const line of lines){
-    if(line==='BEGIN:VEVENT'){ cur={}; continue; }
-    if(line==='END:VEVENT'){ if(cur&&cur.date&&cur.summary) events.push(cur); cur=null; continue; }
-    if(!cur) continue;
-    if(line.startsWith('DTSTART')){
-      const v=line.slice(line.lastIndexOf(':')+1).trim();
-      let d=null;
-      if(/^\d{8}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
-      else if(/^\d{8}T\d{6}Z$/.test(v)){
-        const dt=new Date(Date.UTC(+v.slice(0,4),+v.slice(4,6)-1,+v.slice(6,8),+v.slice(9,11),+v.slice(11,13),+v.slice(13,15)));
-        d=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-      }
-      else if(/^\d{8}T\d{6}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
-      cur.date=d;
-    }
-    else if(line.startsWith('SUMMARY')) cur.summary=line.slice(line.indexOf(':')+1).replace(/\\,/g,',').replace(/\\n/g,' ').trim();
-  }
-  return events;
-}
-function loadGcal(){
-  const cals=D.gcalCals||[];
-  const key=JSON.stringify(cals.map(c=>c.url));
-  if(!cals.length){ GCAL={key,events:[],loading:false}; return; }
-  if(GCAL.key===key&&(GCAL.events||GCAL.loading)) return;
-  GCAL={key,events:null,loading:true};
-  Promise.all(cals.map(c=>
-    fetch('/api/gcal?url='+encodeURIComponent(c.url)).then(r=>r.ok?r.text():'').catch(()=>'')
-  )).then(texts=>{
-    const evs=[];
-    texts.forEach((tx,i)=>parseIcs(tx).forEach(e=>evs.push({date:e.date,label:e.summary,cal:cals[i].name||'구글 캘린더'})));
-    GCAL={key,events:evs,loading:false};
-    if(S.view==='calendar') render();
-  });
-}
+const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981'};
 function calEventsAll(){
   const map={};
   const add=(date,ev)=>{ if(!date) return; (map[date]=map[date]||[]).push(ev); };
@@ -1454,11 +1413,6 @@ function renderCalendarView(){
   const ym=S.calYm||t.slice(0,7); S.calYm=ym;
   const [y,m]=ym.split('-').map(Number);
   const events=calEventsAll();
-  loadGcal();
-  (GCAL.events||[]).forEach(e=>{
-    if(!e.date) return;
-    (events[e.date]=events[e.date]||[]).push({t:'gcal',pid:null,pname:e.cal,label:e.label});
-  });
   const startDow=new Date(y,m-1,1).getDay();
   const daysIn=new Date(y,m,0).getDate();
 
@@ -1495,8 +1449,6 @@ function renderCalendarView(){
     <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${CAL_COLORS.phase}"></i> 단계 마감</span>
     <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${CAL_COLORS.task}"></i> 업무 마감</span>
     <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${CAL_COLORS.end}"></i> 준공 목표</span>
-    <span><i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${CAL_COLORS.gcal}"></i> 구글 일정</span>
-    ${GCAL.loading?'<span style="color:var(--muted)">구글 캘린더 불러오는 중...</span>':''}
   </div>
 </div>`;
 }

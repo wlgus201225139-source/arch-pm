@@ -198,7 +198,7 @@ const PM_KEY = 'archpm_pm_name';
 let D = null;            // 로드 전에는 null — 저장 금지 (빈 데이터로 덮어쓰기 방지)
 let fbAuth=null, fbDb=null, _unsub=null, _saving=false, _userDoc=null;
 // V: 화면 상태
-let V = { screen:'home', pid:null, openPhase:null, showAll:false, addOpen:null, subOpen:null, calYm:null, calSel:null, calMine:true, gcalOpen:false };
+let V = { screen:'home', pid:null, openPhase:null, showAll:false, addOpen:null, subOpen:null, calYm:null, calSel:null, calMine:true };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function today(){ return new Date().toISOString().split('T')[0]; }
@@ -652,212 +652,8 @@ function setPhaseDeadline(pid,idx,newDate){
 }
 
 // ── 마감 캘린더 ──────────────────────────────────────────
-const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981',gcal:'#8b5cf6'};
+const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981'};
 
-// ── 구글 캘린더(iCal) 연동: D.gcalCals=[{name,url}] — /api/gcal 프록시로 로드 ──
-let GCAL={key:'',events:null,loading:false};
-function parseIcs(text){
-  const events=[];
-  const lines=String(text||'').replace(/\r/g,'').replace(/\n[ \t]/g,'').split('\n');
-  let cur=null;
-  for(const line of lines){
-    if(line==='BEGIN:VEVENT'){ cur={}; continue; }
-    if(line==='END:VEVENT'){ if(cur&&cur.date&&cur.summary) events.push(cur); cur=null; continue; }
-    if(!cur) continue;
-    if(line.startsWith('DTSTART')){
-      const v=line.slice(line.lastIndexOf(':')+1).trim();
-      let d=null;
-      if(/^\d{8}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
-      else if(/^\d{8}T\d{6}Z$/.test(v)){
-        const dt=new Date(Date.UTC(+v.slice(0,4),+v.slice(4,6)-1,+v.slice(6,8),+v.slice(9,11),+v.slice(11,13),+v.slice(13,15)));
-        d=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-      }
-      else if(/^\d{8}T\d{6}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
-      cur.date=d;
-    }
-    else if(line.startsWith('SUMMARY')) cur.summary=line.slice(line.indexOf(':')+1).replace(/\\,/g,',').replace(/\\n/g,' ').trim();
-  }
-  return events;
-}
-function loadGcal(){
-  const cals=D.gcalCals||[];
-  const key=JSON.stringify(cals.map(c=>c.url));
-  if(!cals.length){ GCAL={key,events:[],loading:false}; return; }
-  if(GCAL.key===key&&(GCAL.events||GCAL.loading)) return;
-  GCAL={key,events:null,loading:true};
-  Promise.all(cals.map(c=>
-    fetch('/api/gcal?url='+encodeURIComponent(c.url)).then(r=>r.ok?r.text():'').catch(()=>'')
-  )).then(texts=>{
-    const evs=[];
-    texts.forEach((tx,i)=>parseIcs(tx).forEach(e=>evs.push({date:e.date,label:e.summary,cal:cals[i].name||'구글 캘린더'})));
-    GCAL={key,events:evs,loading:false};
-    if(V.screen==='cal') render();
-  });
-}
-// ── 구글 계정 바로 연동 (OAuth) ───────────────────────────
-// 보조 Firebase 앱 인스턴스로 구글 로그인 → Calendar API 토큰만 얻고 즉시 로그아웃.
-// (메인 이메일 로그인 세션에 영향 없음) 일정은 이 기기에만 표시되고 Firestore에 저장하지 않는다.
-let GOA={token:null,exp:0,events:null,loading:false,error:''};
-try{ const s=JSON.parse(sessionStorage.getItem('archpm_goa')||'null');
-  if(s&&s.exp>Date.now()){ GOA.token=s.token; GOA.exp=s.exp; } }catch(e){}
-function goaConnect(){
-  let gapp;
-  try{ gapp=firebase.app('gauth'); }catch(e){ gapp=firebase.initializeApp(FB_CONFIG,'gauth'); }
-  const provider=new firebase.auth.GoogleAuthProvider();
-  provider.addScope('https://www.googleapis.com/auth/calendar.events'); // 읽기+쓰기(양방향)
-  GOA.error='';
-  gapp.auth().signInWithPopup(provider).then(res=>{
-    const token=res.credential&&res.credential.accessToken;
-    gapp.auth().signOut();
-    if(!token){ GOA.error='토큰을 받지 못했습니다. 다시 시도해 주세요.'; render(); return; }
-    GOA={token,exp:Date.now()+50*60*1000,events:null,loading:false,error:''};
-    try{ sessionStorage.setItem('archpm_goa',JSON.stringify({token:GOA.token,exp:GOA.exp})); }catch(e){}
-    loadGoa(true); render();
-  }).catch(e=>{
-    GOA.error = e.code==='auth/operation-not-allowed'
-      ? 'Firebase 콘솔에서 Google 로그인 사용 설정이 필요합니다.'
-      : e.code==='auth/unauthorized-domain'
-      ? 'Firebase 승인된 도메인에 arch-pm-omega.vercel.app 추가가 필요합니다.'
-      : (e.code==='auth/popup-closed-by-user'||e.code==='auth/cancelled-popup-request') ? ''
-      : '연동 실패: '+(e.message||e.code);
-    render();
-  });
-}
-function goaDisconnect(){
-  GOA={token:null,exp:0,events:null,loading:false,error:''};
-  try{ sessionStorage.removeItem('archpm_goa'); }catch(e){}
-  render();
-}
-function loadGoa(force){
-  if(!GOA.token||GOA.exp<Date.now()) return;
-  if(!force&&(GOA.events||GOA.loading)) return;
-  GOA.loading=true;
-  const now=new Date();
-  const tMin=new Date(now.getFullYear(),now.getMonth()-1,1).toISOString();
-  const tMax=new Date(now.getFullYear(),now.getMonth()+7,0).toISOString();
-  fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&maxResults=2500&orderBy=startTime&timeMin='+encodeURIComponent(tMin)+'&timeMax='+encodeURIComponent(tMax),
-    {headers:{Authorization:'Bearer '+GOA.token}})
-  .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-  .then(j=>{
-    const evs=(j.items||[]).filter(it=>it.status!=='cancelled').map(it=>{
-      let d=null;
-      if(it.start&&it.start.date) d=it.start.date;
-      else if(it.start&&it.start.dateTime){
-        const dt=new Date(it.start.dateTime);
-        d=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
-      }
-      return {date:d,label:(it.summary||'(제목 없음)'),cal:'내 구글 캘린더'};
-    }).filter(e=>e.date);
-    GOA.events=evs; GOA.loading=false; GOA.error='';
-    if(V.screen==='cal') render();
-  })
-  .catch(e=>{
-    GOA.loading=false; GOA.token=null; GOA.events=null;
-    GOA.error='구글 일정을 불러오지 못했습니다. Calendar API 사용 설정을 확인하거나 다시 연동해 주세요.';
-    try{ sessionStorage.removeItem('archpm_goa'); }catch(x){}
-    if(V.screen==='cal') render();
-  });
-}
-
-// ── 양방향 동기화: ArchPM 마감일 → 구글 캘린더 ─────────────
-// 내 PM 프로젝트의 단계 마감일·미완료 업무 마감일·준공 목표를 구글 캘린더에
-// 종일 일정으로 등록한다. extendedProperties(archpmKey)로 이벤트를 추적해
-// 재동기화 시 중복 없이 추가/수정하고, 완료·삭제된 항목은 구글에서도 지운다.
-function goaSyncPush(){
-  if(!GOA.token||GOA.exp<Date.now()){ alert('먼저 "구글 계정으로 바로 연동"을 해주세요.'); return; }
-  if(GOA.pushing) return;
-  GOA.pushing=true; GOA.pushMsg='구글 캘린더로 보내는 중...'; render();
-  const pm=myPm();
-  const projs=(D.projects||[]).filter(p=>p.status==='진행중').filter(p=>!pm||(p.pm||'').trim()===pm);
-  const want={};
-  projs.forEach(p=>{
-    PHASES.forEach(ph=>{
-      const dl=p.phaseDeadlines?.[ph];
-      if(dl) want[`phase:${p.id}:${ph}`]={date:dl,summary:`[${p.name}] ${ph} 단계 마감`,
-        description:`ArchPM 단계 마감일\n프로젝트: ${p.name}\n단계: ${ph}`};
-      (D.phaseTasks?.[p.id]?.[ph]||[]).forEach(tk=>{
-        if(tk.dueDate&&!tk.done) want[`task:${tk.id}`]={date:tk.dueDate,summary:`[${p.name}] ${tk.text}`,
-          description:`ArchPM 업무 마감\n프로젝트: ${p.name}\n단계: ${ph}\n업무: ${tk.text}`};
-        (tk.subTasks||[]).forEach(s=>{
-          if(s.dueDate&&!s.done) want[`task:${s.id}`]={date:s.dueDate,summary:`[${p.name}] ${s.text}`,
-            description:`ArchPM 하위 업무 마감\n프로젝트: ${p.name}\n단계: ${ph}\n상위 업무: ${tk.text}`};
-        });
-      });
-    });
-    if(p.end) want[`end:${p.id}`]={date:p.end,summary:`[${p.name}] 준공 목표`,
-      description:`ArchPM 준공 목표\n프로젝트: ${p.name}`};
-  });
-  const hdrs={Authorization:'Bearer '+GOA.token,'Content-Type':'application/json'};
-  const base='https://www.googleapis.com/calendar/v3/calendars/primary/events';
-  const nextDay=d=>new Date(new Date(d).getTime()+864e5).toISOString().split('T')[0];
-  fetch(base+'?privateExtendedProperty='+encodeURIComponent('archpmApp=1')+'&maxResults=2500&showDeleted=false',{headers:hdrs})
-  .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-  .then(async j=>{
-    const existing={};
-    (j.items||[]).forEach(ev=>{
-      const k=ev.extendedProperties&&ev.extendedProperties.private&&ev.extendedProperties.private.archpmKey;
-      if(k&&ev.status!=='cancelled') existing[k]=ev;
-    });
-    let created=0,updated=0,deleted=0,failed=0;
-    const ops=[];
-    for(const k of Object.keys(want)){
-      const w=want[k], ex=existing[k];
-      const body=JSON.stringify({summary:w.summary,description:w.description,
-        start:{date:w.date},end:{date:nextDay(w.date)},
-        extendedProperties:{private:{archpmApp:'1',archpmKey:k}}});
-      if(!ex) ops.push(()=>fetch(base,{method:'POST',headers:hdrs,body}).then(r=>{r.ok?created++:failed++;}));
-      else if(ex.summary!==w.summary||(ex.start&&ex.start.date)!==w.date)
-        ops.push(()=>fetch(base+'/'+ex.id,{method:'PATCH',headers:hdrs,body}).then(r=>{r.ok?updated++:failed++;}));
-    }
-    for(const k of Object.keys(existing)){
-      if(!want[k]) ops.push(()=>fetch(base+'/'+existing[k].id,{method:'DELETE',headers:hdrs}).then(r=>{(r.ok||r.status===410)?deleted++:failed++;}));
-    }
-    for(const op of ops){ await op(); }   // 순차 실행 (API 부하 방지)
-    GOA.pushing=false;
-    GOA.pushMsg=`동기화 완료 — 추가 ${created} · 수정 ${updated} · 삭제 ${deleted}${failed?` · 실패 ${failed}`:''}`;
-    GOA.events=null; loadGoa(true);
-    render();
-  })
-  .catch(e=>{
-    GOA.pushing=false;
-    GOA.pushMsg='동기화 실패 — 연동을 해제했다가 다시 연동한 뒤 시도해 주세요. (쓰기 권한 동의 필요)';
-    render();
-  });
-}
-
-function addGcal(){
-  const name=(document.getElementById('gc-name')?.value||'').trim();
-  const url=(document.getElementById('gc-url')?.value||'').trim();
-  if(!/^https:\/\/calendar\.google\.com\//.test(url)){ alert('구글캘린더의 iCal 비공개 주소(https://calendar.google.com/...)를 붙여넣으세요.'); return; }
-  if(!D.gcalCals) D.gcalCals=[];
-  D.gcalCals.push({name:name||'구글 캘린더',url});
-  save(); render();
-}
-function delGcal(i){
-  if(!confirm('이 구글 캘린더 연동을 삭제할까요?')) return;
-  D.gcalCals.splice(i,1);
-  save(); render();
-}
-// 날짜 → 이벤트 목록: 단계 마감일 / 업무·하위업무 마감일 / 준공 목표
-function calEvents(mineOnly){
-  const map={};
-  const add=(date,ev)=>{ if(!date) return; (map[date]=map[date]||[]).push(ev); };
-  const pm=myPm();
-  (D.projects||[]).filter(p=>p.status==='진행중')
-    .filter(p=>!mineOnly||!pm||(p.pm||'').trim()===pm)
-    .forEach(p=>{
-      PHASES.forEach(ph=>{
-        const dl=p.phaseDeadlines?.[ph];
-        if(dl) add(dl,{t:'phase',pid:p.id,pname:p.name,label:`${ph} 단계 마감`});
-        (D.phaseTasks?.[p.id]?.[ph]||[]).forEach(tk=>{
-          if(tk.dueDate) add(tk.dueDate,{t:'task',pid:p.id,pname:p.name,label:tk.text,done:tk.done});
-          (tk.subTasks||[]).forEach(s=>{ if(s.dueDate) add(s.dueDate,{t:'task',pid:p.id,pname:p.name,label:s.text,done:s.done}); });
-        });
-      });
-      if(p.end) add(p.end,{t:'end',pid:p.id,pname:p.name,label:'준공 목표'});
-    });
-  return map;
-}
 function calShift(n){
   const [y,m]=(V.calYm||today().slice(0,7)).split('-').map(Number);
   const d=new Date(y,m-1+n,1);
@@ -869,12 +665,6 @@ function renderCal(){
   const ym=V.calYm||t.slice(0,7); V.calYm=ym;
   const [y,m]=ym.split('-').map(Number);
   const events=calEvents(V.calMine);
-  // 구글 캘린더 일정 병합 (공유 iCal + 내 계정 OAuth)
-  loadGcal(); loadGoa();
-  (GCAL.events||[]).concat(GOA.events||[]).forEach(e=>{
-    if(!e.date) return;
-    (events[e.date]=events[e.date]||[]).push({t:'gcal',pid:null,pname:e.cal,label:e.label});
-  });
   const startDow=new Date(y,m-1,1).getDay();
   const daysIn=new Date(y,m,0).getDate();
   const sel=V.calSel||(t.slice(0,7)===ym?t:null);
@@ -924,48 +714,10 @@ ${selEvs.length?selEvs.map(e=>`
     <span><i style="background:${CAL_COLORS.phase}"></i>단계 마감</span>
     <span><i style="background:${CAL_COLORS.task}"></i>업무 마감</span>
     <span><i style="background:${CAL_COLORS.end}"></i>준공 목표</span>
-    <span><i style="background:${CAL_COLORS.gcal}"></i>구글 일정</span>
   </div>
-  ${GCAL.loading?'<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:5px">구글 캘린더 불러오는 중...</div>':''}
 </div>
-${renderGcalConfig()}
 ${selList}`;
 }
-function renderGcalConfig(){
-  const cals=D.gcalCals||[];
-  const goaOn=!!(GOA.token&&GOA.exp>Date.now());
-  const goaRow=goaOn
-    ?`<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:8px">
-        <span style="font-size:13px;flex:1">✓ 내 구글 계정 연동됨${GOA.loading?' · 불러오는 중...':GOA.events?` · 일정 ${GOA.events.length}개`:''}</span>
-        <button class="task-del" style="font-size:11.5px;color:var(--muted)" onclick="goaDisconnect()">해제</button>
-      </div>
-      <button class="open-add" style="margin:0 0 8px;${GOA.pushing?'opacity:.5;pointer-events:none;':''}" onclick="goaSyncPush()">${GOA.pushing?'⏳ 보내는 중...':'⬆ ArchPM 마감일 → 구글 캘린더 보내기'}</button>
-      ${GOA.pushMsg?`<div style="font-size:11.5px;color:${GOA.pushMsg.includes('실패')?'var(--danger)':'var(--success)'};margin-bottom:8px;text-align:center">${esc(GOA.pushMsg)}</div>`:''}
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">내 프로젝트의 단계 마감·미완료 업무·준공 목표가 구글 캘린더에 일정으로 등록됩니다. 마감일을 바꾸거나 업무를 완료하면 다시 보내기를 눌러 반영하세요 (중복 없이 갱신·정리됩니다).</div>`
-    :`<button class="open-add" style="margin:0 0 8px" onclick="goaConnect()">🔗 구글 계정으로 바로 연동</button>`;
-  const goaErr=GOA.error?`<div style="font-size:11.5px;color:var(--danger);margin-bottom:8px">${esc(GOA.error)}</div>`:'';
-  return `
-<div class="card" style="padding:12px 14px">
-  <button class="sub-add-btn" style="font-size:13px" onclick="V.gcalOpen=!V.gcalOpen;render()">⚙ 구글 캘린더 연동 ${(cals.length||goaOn)?`(연결됨)`:''}</button>
-  ${V.gcalOpen?`
-  <div style="margin-top:10px">
-    ${goaRow}${goaErr}
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">내 구글 계정의 기본 캘린더 일정을 이 기기에서 바로 봅니다. 연동은 기기별이며 다른 사람에게는 보이지 않습니다.</div>
-    <div style="font-size:12px;font-weight:700;color:var(--muted);margin-bottom:6px;border-top:1px solid var(--bd);padding-top:10px">공유 캘린더 (iCal 주소)</div>
-    ${cals.map((c,i)=>`
-    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8fafc;border:1px solid var(--bd);border-radius:7px;margin-bottom:5px">
-      <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${CAL_COLORS.gcal};flex-shrink:0"></span>
-      <span style="flex:1;font-size:13px">${esc(c.name)}</span>
-      <button class="task-del" onclick="delGcal(${i})">✕</button>
-    </div>`).join('')}
-    <input type="text" id="gc-name" placeholder="이름 (예: 내 구글 캘린더)" style="width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:8px;margin-bottom:6px;font-size:13.5px">
-    <input type="text" id="gc-url" placeholder="iCal 비공개 주소 붙여넣기 (https://calendar.google.com/...)" style="width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:8px;margin-bottom:7px;font-size:12.5px">
-    <button class="open-add" style="margin:0" onclick="addGcal()">＋ 연동 추가</button>
-    <div class="np-note" style="text-align:left;margin-top:9px">📌 주소 찾는 법: 구글캘린더(웹) → ⚙ 설정 → 왼쪽에서 내 캘린더 선택 → <b>캘린더 통합</b> → <b>iCal 형식의 비공개 주소</b> 복사.<br>구글캘린더에 일정을 입력하면 여기 캘린더에 보라색으로 자동 표시됩니다 (최대 5분 지연). 반복 일정은 첫 회차만 표시됩니다.</div>
-  </div>`:''}
-</div>`;
-}
-
 // ── 프로젝트 등록/수정 폼 (신규·편집 공용) ────────────────
 function renderProjForm(){
   const isEdit=V.screen==='edit';
