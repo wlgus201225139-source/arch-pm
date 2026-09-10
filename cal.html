@@ -60,6 +60,7 @@ a.full{display:block;text-align:center;font-size:12px;color:var(--pr);margin-top
     <input id="li-pw" type="password" placeholder="비밀번호" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     <button class="go" onclick="doLogin()">로그인</button>
     <button class="go" style="background:#fff;color:var(--tx);border:1px solid var(--bd);margin-top:8px" onclick="doGoogleLogin()">G 구글 계정으로 로그인</button>
+    <div style="text-align:center;margin-top:10px"><a onclick="doPwReset()" style="font-size:12px;color:var(--pr);cursor:pointer;text-decoration:underline">비밀번호 재설정 메일 보내기</a></div>
   </div>
 </div>
 
@@ -119,6 +120,14 @@ function doGoogleLogin(){
     if(e.code==='auth/popup-closed-by-user'||e.code==='auth/cancelled-popup-request') return;
     document.getElementById('login-err').textContent='구글 로그인 실패: '+(e.message||e.code);
   });
+}
+function doPwReset(){
+  const email=(document.getElementById('li-email').value||'').trim();
+  const err=document.getElementById('login-err');
+  if(!email){ err.textContent='이메일을 입력한 뒤 다시 눌러주세요.'; return; }
+  fbAuth.sendPasswordResetEmail(email)
+    .then(()=>{ err.style.color='#2563eb'; err.textContent='재설정 메일을 보냈습니다. 메일함(스팸함 포함)을 확인하세요.'; })
+    .catch(e=>{ err.style.color=''; err.textContent='메일 발송 실패: '+(e.message||e.code); });
 }
 
 function calEvents(){
