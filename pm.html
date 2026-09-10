@@ -54,14 +54,9 @@ input:focus,select:focus{outline:none;border-color:var(--pr)!important;box-shado
 .proj-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}
 .sec-title{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:16px 2px 8px}
 
-/* ── 단계 네비 ── */
-.phase-nav{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;-webkit-overflow-scrolling:touch}
-.phase-chip{flex-shrink:0;border:1.5px solid var(--bd);background:var(--w);border-radius:100px;padding:6px 13px;font-size:12.5px;font-weight:600;color:var(--muted)}
-.phase-chip.cur{border-color:var(--pr);background:var(--pr);color:#fff}
-.phase-chip.done{border-color:#bbf7d0;background:#f0fdf4;color:#059669}
-
-/* ── 단계 섹션 ── */
-.ph-sec{background:var(--w);border-radius:var(--r);box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:10px;overflow:hidden}
+/* ── 단계 섹션 (드롭다운 아코디언) ── */
+.ph-sec{background:var(--w);border-radius:var(--r);box-shadow:0 1px 3px rgba(0,0,0,.08);margin-bottom:9px;overflow:hidden;border:1.5px solid transparent}
+.ph-sec:has(.ph-head.open){border-color:var(--pr)}
 .ph-head{display:flex;align-items:center;gap:9px;padding:13px 15px;border:none;background:none;width:100%;text-align:left}
 .ph-head .arrow{font-size:11px;color:var(--muted);transition:transform .15s}
 .ph-head.open .arrow{transform:rotate(90deg)}
@@ -342,13 +337,8 @@ function renderProj(pid){
   const p=(D.projects||[]).find(x=>x.id===pid);
   if(!p) return '<div class="empty">프로젝트를 찾을 수 없습니다.</div>';
   const curPhase=p.phase&&PHASES.includes(p.phase)?p.phase:PHASES[0];
-  const open=V.openPhase||curPhase;
-  const curIdx=PHASES.indexOf(curPhase);
-
-  const chips=PHASES.map((ph,i)=>{
-    const cls=ph===open?'cur':(i<curIdx?'done':'');
-    return `<button class="phase-chip ${cls}" onclick="V.openPhase='${ph}';V.addOpen=null;V.subOpen=null;render()">${ph}</button>`;
-  }).join('');
+  // openPhase: null=초기(현재 단계 펼침), ''=모두 접힘, 그 외=해당 단계 펼침
+  const open=V.openPhase===null?curPhase:V.openPhase;
 
   return `
 <button class="back-btn" onclick="go('home')">‹ 내 프로젝트</button>
@@ -360,21 +350,20 @@ function renderProj(pid){
     ${p.client?`<span>🏢 ${esc(p.client)}</span>`:''}
   </div>
 </div>
-<div class="phase-nav">${chips}</div>
-${renderPhaseSec(pid,open,true)}
-<div class="sec-title">다른 단계</div>
-${PHASES.filter(ph=>ph!==open).map(ph=>renderPhaseSec(pid,ph,false)).join('')}`;
+${PHASES.map(ph=>renderPhaseSec(pid,ph,ph===open,ph===curPhase)).join('')}`;
 }
 
-function renderPhaseSec(pid,phase,expanded){
+function renderPhaseSec(pid,phase,isOpen,isCur){
   const tasks=D.phaseTasks?.[pid]?.[phase]||[];
   const done=tasks.filter(t=>t.done).length;
-  const isOpen=expanded;
+  // 펼쳐진 박스를 다시 탭하면 접힘, 다른 박스를 탭하면 그 박스만 펼쳐짐
   const head=`
-<button class="ph-head ${isOpen?'open':''}" onclick="V.openPhase='${phase}';V.addOpen=null;V.subOpen=null;render()">
+<button class="ph-head ${isOpen?'open':''}" onclick="V.openPhase=${isOpen?"''":`'${phase}'`};V.addOpen=null;V.subOpen=null;render()">
   <span class="arrow">▶</span>
   <span style="font-weight:700;font-size:14.5px">${phase}</span>
-  <span class="ph-stat">${tasks.length?`${done}/${tasks.length} 완료`:'업무 없음'}</span>
+  ${isCur?'<span class="badge b-bl" style="font-size:10px">현재 단계</span>':''}
+  ${tasks.length&&done===tasks.length?'<span class="badge b-gr" style="font-size:10px">✓ 완료</span>':''}
+  <span class="ph-stat" style="margin-left:auto">${tasks.length?`${done}/${tasks.length}`:'업무 없음'}</span>
 </button>`;
   if(!isOpen) return `<div class="ph-sec">${head}</div>`;
 
