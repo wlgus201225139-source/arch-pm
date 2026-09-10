@@ -122,11 +122,12 @@ function doGoogleLogin(){
   });
 }
 function doPwReset(){
-  const email=(document.getElementById('li-email').value||'').trim();
+  const pre=(document.getElementById('li-email').value||'').trim();
+  const email=(prompt('비밀번호를 재설정할 이메일 주소를 입력하세요',pre)||'').trim();
+  if(!email) return;
   const err=document.getElementById('login-err');
-  if(!email){ err.textContent='이메일을 입력한 뒤 다시 눌러주세요.'; return; }
   fbAuth.sendPasswordResetEmail(email)
-    .then(()=>{ err.style.color='#2563eb'; err.textContent='재설정 메일을 보냈습니다. 메일함(스팸함 포함)을 확인하세요.'; })
+    .then(()=>{ err.style.color='#2563eb'; err.textContent=email+' 주소로 재설정 메일을 보냈습니다. 메일함(스팸함 포함)을 확인하세요.'; })
     .catch(e=>{ err.style.color=''; err.textContent='메일 발송 실패: '+(e.message||e.code); });
 }
 

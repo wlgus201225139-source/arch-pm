@@ -378,10 +378,11 @@ function doGoogleLogin() {
   });
 }
 function doPwReset() {
-  const email = (document.getElementById('li-email')?.value || '').trim();
-  if (!email) { showLoginErr('이메일을 입력한 뒤 다시 눌러주세요.'); return; }
+  const pre = (document.getElementById('li-email')?.value || '').trim();
+  const email = (prompt('비밀번호를 재설정할 이메일 주소를 입력하세요', pre) || '').trim();
+  if (!email) return;
   fbAuth.sendPasswordResetEmail(email)
-    .then(() => showLoginErr('재설정 메일을 보냈습니다. 메일함(스팸함 포함)을 확인하세요.', false))
+    .then(() => showLoginErr(email + ' 주소로 재설정 메일을 보냈습니다. 메일함(스팸함 포함)을 확인하세요.', false))
     .catch(e => showLoginErr('메일 발송 실패: ' + (e.message || e.code)));
 }
 // 로그인된 본인 계정의 비밀번호 설정/변경 — 구글 전환된 계정도 이걸로
