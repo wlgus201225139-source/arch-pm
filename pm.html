@@ -225,7 +225,7 @@ function enterApp(){
   document.getElementById('app').style.display='flex';
   document.getElementById('content').innerHTML='<div class="empty">불러오는 중...</div>';
   fbDb.collection('data').doc('main').get().then(doc=>{
-    if(doc.exists){ D=doc.data(); if(!D.phaseTasks) D.phaseTasks={}; render(); setupSync(); }
+    if(doc.exists){ D=doc.data(); if(!D.phaseTasks) D.phaseTasks={}; history.replaceState({screen:V.screen,pid:V.pid},''); render(); setupSync(); }
     else{ document.getElementById('content').innerHTML='<div class="empty">데이터가 없습니다.<br>데스크톱 ArchPM에서 먼저 프로젝트를 등록하세요.</div>'; }
   }).catch(e=>{
     document.getElementById('content').innerHTML='<div class="empty">데이터를 불러오지 못했습니다.<br>'+esc(e.message)+'</div>';
@@ -272,7 +272,14 @@ function setPm(name){
 }
 
 // ── 렌더 ─────────────────────────────────────────────────
-function go(screen,pid){ V={...V,screen,pid:pid||null,openPhase:null,addOpen:null,subOpen:null}; render(); window.scrollTo(0,0); }
+// 화면 전환: go()는 히스토리에 쌓고, 안드로이드 뒤로가기(popstate)는 쌓지 않고 복원만
+function applyNav(screen,pid){ V={...V,screen,pid:pid||null,openPhase:null,addOpen:null,subOpen:null}; render(); window.scrollTo(0,0); }
+function go(screen,pid){ history.pushState({screen,pid:pid||null},''); applyNav(screen,pid); }
+window.addEventListener('popstate',e=>{
+  if(!D) return;                       // 로그인 전에는 무시
+  const s=e.state||{screen:'home',pid:null};
+  applyNav(s.screen,s.pid);
+});
 function render(){
   if(!D) return;
   document.getElementById('hdr-pm').textContent=myPm()?('PM · '+myPm()):'PM 미선택';
