@@ -1,0 +1,15 @@
+{
+  "name": "ArchPM PM 업무등록",
+  "short_name": "ArchPM",
+  "description": "건축설계 프로젝트 PM 업무등록",
+  "start_url": "/pm.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#1e2330",
+  "theme_color": "#1e2330",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
