@@ -99,6 +99,15 @@ input:focus,select:focus{outline:none;border-color:var(--pr)!important;box-shado
 
 .back-btn{background:none;border:none;color:var(--pr);font-size:14px;font-weight:600;padding:2px 0;margin-bottom:10px;display:inline-flex;align-items:center;gap:4px}
 select.pm-sel{padding:9px 12px;border:1px solid var(--bd);border-radius:8px;background:#fff;width:100%}
+
+/* ── 새 프로젝트 폼 ── */
+.np-field{margin-bottom:12px}
+.np-field label{display:block;font-size:12px;font-weight:700;color:var(--muted);margin-bottom:5px}
+.np-field .req{color:var(--danger)}
+.np-field input,.np-field select{width:100%;padding:11px 13px;border:1px solid var(--bd);border-radius:8px;font-size:14.5px;background:#fff}
+.np-row{display:flex;gap:9px}
+.np-row .np-field{flex:1}
+.np-note{font-size:12px;color:var(--muted);text-align:center;margin-top:10px;line-height:1.6}
 </style>
 </head>
 <body>
@@ -254,7 +263,7 @@ function render(){
   if(!D) return;
   document.getElementById('hdr-pm').textContent=myPm()?('PM · '+myPm()):'PM 미선택';
   const c=document.getElementById('content');
-  c.innerHTML = V.screen==='proj'&&V.pid ? renderProj(V.pid) : renderHome();
+  c.innerHTML = V.screen==='proj'&&V.pid ? renderProj(V.pid) : V.screen==='new' ? renderNewProj() : renderHome();
 }
 
 function taskCount(pid){
@@ -305,6 +314,7 @@ function renderHome(){
   return pmSel
     +`<div class="sec-title">내 프로젝트 (${mine.length})</div>`
     +(mine.length?mine.map(projCard).join(''):`<div class="empty">'${esc(pm)}' 담당 프로젝트가 없습니다.</div>`)
+    +`<button class="open-add" onclick="go('new')">＋ 새 프로젝트 등록</button>`
     +(others.length?`
 <button class="open-add" style="margin-top:14px" onclick="V.showAll=!V.showAll;render()">${V.showAll?'다른 PM 프로젝트 숨기기':'다른 PM 프로젝트 보기 ('+others.length+')'}</button>
 ${V.showAll?others.map(projCard).join(''):''}`:'');
@@ -414,6 +424,60 @@ function renderPhaseSec(pid,phase,expanded){
     ${rows||'<div style="font-size:13px;color:var(--muted);padding:2px 0 4px">등록된 업무가 없습니다.</div>'}
     ${addForm}
   </div></div>`;
+}
+
+// ── 새 프로젝트 등록 ─────────────────────────────────────
+function renderNewProj(){
+  const types=['업무시설','근린생활시설','단독주택','공동주택','교육시설','의료시설','기타'];
+  return `
+<button class="back-btn" onclick="go('home')">‹ 내 프로젝트</button>
+<div class="card">
+  <div style="font-size:16.5px;font-weight:700;margin-bottom:14px">새 프로젝트 등록</div>
+  <div class="np-field"><label>프로젝트명 <span class="req">*</span></label>
+    <input type="text" id="np-name" placeholder="예: 역삼동 업무시설 신축"></div>
+  <div class="np-field"><label>건축주 <span class="req">*</span></label>
+    <input type="text" id="np-client" placeholder="건축주명 또는 법인명"></div>
+  <div class="np-field"><label>담당 PM</label>
+    <input type="text" id="np-pm" value="${esc(myPm())}" placeholder="담당자 이름"></div>
+  <div class="np-row">
+    <div class="np-field"><label>용도</label>
+      <select id="np-type">${types.map(t=>`<option>${t}</option>`).join('')}</select></div>
+    <div class="np-field"><label>현재 단계</label>
+      <select id="np-phase">${PHASES.map(ph=>`<option>${ph}</option>`).join('')}</select></div>
+  </div>
+  <div class="np-field"><label>주소</label>
+    <input type="text" id="np-addr" placeholder="대지 주소"></div>
+  <div class="np-row">
+    <div class="np-field"><label>계약일</label>
+      <input type="date" id="np-contract" value="${today()}"></div>
+    <div class="np-field"><label>준공 목표</label>
+      <input type="date" id="np-end"></div>
+  </div>
+  <div class="form-btns" style="margin-top:4px">
+    <button class="add" onclick="addProject()">프로젝트 등록</button>
+    <button class="cancel" onclick="go('home')">취소</button>
+  </div>
+</div>
+<div class="np-note">사업비·면적·규모 등 상세 정보는<br>데스크톱 ArchPM의 프로젝트 편집에서 입력할 수 있습니다.</div>`;
+}
+function addProject(){
+  const gv=id=>(document.getElementById(id)?.value||'').trim();
+  const name=gv('np-name'), client=gv('np-client');
+  if(!name){ alert('프로젝트명을 입력하세요. (필수)'); focusEl('np-name'); return; }
+  if(!client){ alert('건축주를 입력하세요. (필수)'); focusEl('np-client'); return; }
+  if(!D.projects) D.projects=[];
+  const id=uid();
+  // 데스크톱 saveProject와 동일한 필드 구조로 저장
+  D.projects.push({
+    id, created:today(), name, client, pm:gv('np-pm'), type:gv('np-type'),
+    status:'진행중', phase:gv('np-phase'), addr:gv('np-addr'), budget:'',
+    contract:gv('np-contract'), design:'', permit:'', start:'', end:gv('np-end'),
+    land:'', bldg:'', total:'', floors:'', desc:''
+  });
+  // PM 미선택 상태에서 등록했다면 입력한 PM을 내 PM으로 기억
+  if(gv('np-pm')&&!localStorage.getItem(PM_KEY)) localStorage.setItem(PM_KEY,gv('np-pm'));
+  save();
+  go('proj',id);   // 등록 직후 바로 업무 입력 화면으로
 }
 
 function quickChips(inputId){
