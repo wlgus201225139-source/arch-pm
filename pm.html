@@ -704,7 +704,7 @@ function goaConnect(){
   let gapp;
   try{ gapp=firebase.app('gauth'); }catch(e){ gapp=firebase.initializeApp(FB_CONFIG,'gauth'); }
   const provider=new firebase.auth.GoogleAuthProvider();
-  provider.addScope('https://www.googleapis.com/auth/calendar.readonly');
+  provider.addScope('https://www.googleapis.com/auth/calendar.events'); // 읽기+쓰기(양방향)
   GOA.error='';
   gapp.auth().signInWithPopup(provider).then(res=>{
     const token=res.credential&&res.credential.accessToken;
@@ -756,6 +756,72 @@ function loadGoa(force){
     GOA.error='구글 일정을 불러오지 못했습니다. Calendar API 사용 설정을 확인하거나 다시 연동해 주세요.';
     try{ sessionStorage.removeItem('archpm_goa'); }catch(x){}
     if(V.screen==='cal') render();
+  });
+}
+
+// ── 양방향 동기화: ArchPM 마감일 → 구글 캘린더 ─────────────
+// 내 PM 프로젝트의 단계 마감일·미완료 업무 마감일·준공 목표를 구글 캘린더에
+// 종일 일정으로 등록한다. extendedProperties(archpmKey)로 이벤트를 추적해
+// 재동기화 시 중복 없이 추가/수정하고, 완료·삭제된 항목은 구글에서도 지운다.
+function goaSyncPush(){
+  if(!GOA.token||GOA.exp<Date.now()){ alert('먼저 "구글 계정으로 바로 연동"을 해주세요.'); return; }
+  if(GOA.pushing) return;
+  GOA.pushing=true; GOA.pushMsg='구글 캘린더로 보내는 중...'; render();
+  const pm=myPm();
+  const projs=(D.projects||[]).filter(p=>p.status==='진행중').filter(p=>!pm||(p.pm||'').trim()===pm);
+  const want={};
+  projs.forEach(p=>{
+    PHASES.forEach(ph=>{
+      const dl=p.phaseDeadlines?.[ph];
+      if(dl) want[`phase:${p.id}:${ph}`]={date:dl,summary:`[${p.name}] ${ph} 단계 마감`,
+        description:`ArchPM 단계 마감일\n프로젝트: ${p.name}\n단계: ${ph}`};
+      (D.phaseTasks?.[p.id]?.[ph]||[]).forEach(tk=>{
+        if(tk.dueDate&&!tk.done) want[`task:${tk.id}`]={date:tk.dueDate,summary:`[${p.name}] ${tk.text}`,
+          description:`ArchPM 업무 마감\n프로젝트: ${p.name}\n단계: ${ph}\n업무: ${tk.text}`};
+        (tk.subTasks||[]).forEach(s=>{
+          if(s.dueDate&&!s.done) want[`task:${s.id}`]={date:s.dueDate,summary:`[${p.name}] ${s.text}`,
+            description:`ArchPM 하위 업무 마감\n프로젝트: ${p.name}\n단계: ${ph}\n상위 업무: ${tk.text}`};
+        });
+      });
+    });
+    if(p.end) want[`end:${p.id}`]={date:p.end,summary:`[${p.name}] 준공 목표`,
+      description:`ArchPM 준공 목표\n프로젝트: ${p.name}`};
+  });
+  const hdrs={Authorization:'Bearer '+GOA.token,'Content-Type':'application/json'};
+  const base='https://www.googleapis.com/calendar/v3/calendars/primary/events';
+  const nextDay=d=>new Date(new Date(d).getTime()+864e5).toISOString().split('T')[0];
+  fetch(base+'?privateExtendedProperty='+encodeURIComponent('archpmApp=1')+'&maxResults=2500&showDeleted=false',{headers:hdrs})
+  .then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+  .then(async j=>{
+    const existing={};
+    (j.items||[]).forEach(ev=>{
+      const k=ev.extendedProperties&&ev.extendedProperties.private&&ev.extendedProperties.private.archpmKey;
+      if(k&&ev.status!=='cancelled') existing[k]=ev;
+    });
+    let created=0,updated=0,deleted=0,failed=0;
+    const ops=[];
+    for(const k of Object.keys(want)){
+      const w=want[k], ex=existing[k];
+      const body=JSON.stringify({summary:w.summary,description:w.description,
+        start:{date:w.date},end:{date:nextDay(w.date)},
+        extendedProperties:{private:{archpmApp:'1',archpmKey:k}}});
+      if(!ex) ops.push(()=>fetch(base,{method:'POST',headers:hdrs,body}).then(r=>{r.ok?created++:failed++;}));
+      else if(ex.summary!==w.summary||(ex.start&&ex.start.date)!==w.date)
+        ops.push(()=>fetch(base+'/'+ex.id,{method:'PATCH',headers:hdrs,body}).then(r=>{r.ok?updated++:failed++;}));
+    }
+    for(const k of Object.keys(existing)){
+      if(!want[k]) ops.push(()=>fetch(base+'/'+existing[k].id,{method:'DELETE',headers:hdrs}).then(r=>{(r.ok||r.status===410)?deleted++:failed++;}));
+    }
+    for(const op of ops){ await op(); }   // 순차 실행 (API 부하 방지)
+    GOA.pushing=false;
+    GOA.pushMsg=`동기화 완료 — 추가 ${created} · 수정 ${updated} · 삭제 ${deleted}${failed?` · 실패 ${failed}`:''}`;
+    GOA.events=null; loadGoa(true);
+    render();
+  })
+  .catch(e=>{
+    GOA.pushing=false;
+    GOA.pushMsg='동기화 실패 — 연동을 해제했다가 다시 연동한 뒤 시도해 주세요. (쓰기 권한 동의 필요)';
+    render();
   });
 }
 
@@ -872,7 +938,10 @@ function renderGcalConfig(){
     ?`<div style="display:flex;align-items:center;gap:8px;padding:9px 11px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;margin-bottom:8px">
         <span style="font-size:13px;flex:1">✓ 내 구글 계정 연동됨${GOA.loading?' · 불러오는 중...':GOA.events?` · 일정 ${GOA.events.length}개`:''}</span>
         <button class="task-del" style="font-size:11.5px;color:var(--muted)" onclick="goaDisconnect()">해제</button>
-      </div>`
+      </div>
+      <button class="open-add" style="margin:0 0 8px;${GOA.pushing?'opacity:.5;pointer-events:none;':''}" onclick="goaSyncPush()">${GOA.pushing?'⏳ 보내는 중...':'⬆ ArchPM 마감일 → 구글 캘린더 보내기'}</button>
+      ${GOA.pushMsg?`<div style="font-size:11.5px;color:${GOA.pushMsg.includes('실패')?'var(--danger)':'var(--success)'};margin-bottom:8px;text-align:center">${esc(GOA.pushMsg)}</div>`:''}
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">내 프로젝트의 단계 마감·미완료 업무·준공 목표가 구글 캘린더에 일정으로 등록됩니다. 마감일을 바꾸거나 업무를 완료하면 다시 보내기를 눌러 반영하세요 (중복 없이 갱신·정리됩니다).</div>`
     :`<button class="open-add" style="margin:0 0 8px" onclick="goaConnect()">🔗 구글 계정으로 바로 연동</button>`;
   const goaErr=GOA.error?`<div style="font-size:11.5px;color:var(--danger);margin-bottom:8px">${esc(GOA.error)}</div>`:'';
   return `
