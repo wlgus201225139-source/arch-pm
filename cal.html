@@ -80,8 +80,49 @@ const FB_CONFIG = {
   measurementId: "G-PPFL1JLJMT"
 };
 const PHASES=['기획','계획설계','기본설계','중간설계','실시설계','허가'];
-const COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981'};
+const COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981',gcal:'#8b5cf6'};
 const PM_FILTER=new URLSearchParams(location.search).get('pm')||'';
+
+// 구글 캘린더(iCal) 연동 — PM 앱에서 등록한 D.gcalCals를 /api/gcal 프록시로 로드
+let GCAL={key:'',events:null,loading:false};
+function parseIcs(text){
+  const events=[];
+  const lines=String(text||'').replace(/\r/g,'').replace(/\n[ \t]/g,'').split('\n');
+  let cur=null;
+  for(const line of lines){
+    if(line==='BEGIN:VEVENT'){ cur={}; continue; }
+    if(line==='END:VEVENT'){ if(cur&&cur.date&&cur.summary) events.push(cur); cur=null; continue; }
+    if(!cur) continue;
+    if(line.startsWith('DTSTART')){
+      const v=line.slice(line.lastIndexOf(':')+1).trim();
+      let d=null;
+      if(/^\d{8}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+      else if(/^\d{8}T\d{6}Z$/.test(v)){
+        const dt=new Date(Date.UTC(+v.slice(0,4),+v.slice(4,6)-1,+v.slice(6,8),+v.slice(9,11),+v.slice(11,13),+v.slice(13,15)));
+        d=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+      }
+      else if(/^\d{8}T\d{6}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+      cur.date=d;
+    }
+    else if(line.startsWith('SUMMARY')) cur.summary=line.slice(line.indexOf(':')+1).replace(/\\,/g,',').replace(/\\n/g,' ').trim();
+  }
+  return events;
+}
+function loadGcal(){
+  const cals=(D&&D.gcalCals)||[];
+  const key=JSON.stringify(cals.map(c=>c.url));
+  if(!cals.length){ GCAL={key,events:[],loading:false}; return; }
+  if(GCAL.key===key&&(GCAL.events||GCAL.loading)) return;
+  GCAL={key,events:null,loading:true};
+  Promise.all(cals.map(c=>
+    fetch('/api/gcal?url='+encodeURIComponent(c.url)).then(r=>r.ok?r.text():'').catch(()=>'')
+  )).then(texts=>{
+    const evs=[];
+    texts.forEach((tx,i)=>parseIcs(tx).forEach(e=>evs.push({date:e.date,label:e.summary,cal:cals[i].name||'구글 캘린더'})));
+    GCAL={key,events:evs,loading:false};
+    render();
+  });
+}
 
 let D=null, fbAuth=null, fbDb=null, _unsub=null, ym=null;
 
@@ -144,6 +185,11 @@ function render(){
   if(!ym) ym=t.slice(0,7);
   const [y,m]=ym.split('-').map(Number);
   const events=calEvents();
+  loadGcal();
+  (GCAL.events||[]).forEach(e=>{
+    if(!e.date) return;
+    (events[e.date]=events[e.date]||[]).push({t:'gcal',pname:e.cal,label:e.label});
+  });
   const startDow=new Date(y,m-1,1).getDay();
   const daysIn=new Date(y,m,0).getDate();
 
@@ -166,7 +212,7 @@ function render(){
   const upcoming=Object.keys(events).filter(ds=>ds>=t&&ds<=upEnd).sort()
     .flatMap(ds=>events[ds].map(e=>({...e,ds})));
   const overdue=Object.keys(events).filter(ds=>ds<t).sort()
-    .flatMap(ds=>events[ds].filter(e=>e.t!=='end').map(e=>({...e,ds})));
+    .flatMap(ds=>events[ds].filter(e=>e.t==='task'||e.t==='phase').map(e=>({...e,ds})));
 
   const item=e=>`
 <div class="up-item">
@@ -196,6 +242,7 @@ function render(){
     <span><i style="background:${COLORS.phase}"></i>단계 마감</span>
     <span><i style="background:${COLORS.task}"></i>업무 마감</span>
     <span><i style="background:${COLORS.end}"></i>준공 목표</span>
+    <span><i style="background:${COLORS.gcal}"></i>구글 일정</span>
   </div>
 </div>
 ${overdue.length?`<div class="sec-t" style="color:#b91c1c">기한 초과 (${overdue.length})</div>${overdue.map(item).join('')}`:''}

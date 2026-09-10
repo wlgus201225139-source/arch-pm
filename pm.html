@@ -196,7 +196,7 @@ const PM_KEY = 'archpm_pm_name';
 let D = null;            // 로드 전에는 null — 저장 금지 (빈 데이터로 덮어쓰기 방지)
 let fbAuth=null, fbDb=null, _unsub=null, _saving=false, _userDoc=null;
 // V: 화면 상태
-let V = { screen:'home', pid:null, openPhase:null, showAll:false, addOpen:null, subOpen:null, calYm:null, calSel:null, calMine:true };
+let V = { screen:'home', pid:null, openPhase:null, showAll:false, addOpen:null, subOpen:null, calYm:null, calSel:null, calMine:true, gcalOpen:false };
 
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function today(){ return new Date().toISOString().split('T')[0]; }
@@ -616,7 +616,61 @@ function setPhaseDeadline(pid,idx,newDate){
 }
 
 // ── 마감 캘린더 ──────────────────────────────────────────
-const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981'};
+const CAL_COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981',gcal:'#8b5cf6'};
+
+// ── 구글 캘린더(iCal) 연동: D.gcalCals=[{name,url}] — /api/gcal 프록시로 로드 ──
+let GCAL={key:'',events:null,loading:false};
+function parseIcs(text){
+  const events=[];
+  const lines=String(text||'').replace(/\r/g,'').replace(/\n[ \t]/g,'').split('\n');
+  let cur=null;
+  for(const line of lines){
+    if(line==='BEGIN:VEVENT'){ cur={}; continue; }
+    if(line==='END:VEVENT'){ if(cur&&cur.date&&cur.summary) events.push(cur); cur=null; continue; }
+    if(!cur) continue;
+    if(line.startsWith('DTSTART')){
+      const v=line.slice(line.lastIndexOf(':')+1).trim();
+      let d=null;
+      if(/^\d{8}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+      else if(/^\d{8}T\d{6}Z$/.test(v)){
+        const dt=new Date(Date.UTC(+v.slice(0,4),+v.slice(4,6)-1,+v.slice(6,8),+v.slice(9,11),+v.slice(11,13),+v.slice(13,15)));
+        d=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+      }
+      else if(/^\d{8}T\d{6}$/.test(v)) d=`${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`;
+      cur.date=d;
+    }
+    else if(line.startsWith('SUMMARY')) cur.summary=line.slice(line.indexOf(':')+1).replace(/\\,/g,',').replace(/\\n/g,' ').trim();
+  }
+  return events;
+}
+function loadGcal(){
+  const cals=D.gcalCals||[];
+  const key=JSON.stringify(cals.map(c=>c.url));
+  if(!cals.length){ GCAL={key,events:[],loading:false}; return; }
+  if(GCAL.key===key&&(GCAL.events||GCAL.loading)) return;
+  GCAL={key,events:null,loading:true};
+  Promise.all(cals.map(c=>
+    fetch('/api/gcal?url='+encodeURIComponent(c.url)).then(r=>r.ok?r.text():'').catch(()=>'')
+  )).then(texts=>{
+    const evs=[];
+    texts.forEach((tx,i)=>parseIcs(tx).forEach(e=>evs.push({date:e.date,label:e.summary,cal:cals[i].name||'구글 캘린더'})));
+    GCAL={key,events:evs,loading:false};
+    if(V.screen==='cal') render();
+  });
+}
+function addGcal(){
+  const name=(document.getElementById('gc-name')?.value||'').trim();
+  const url=(document.getElementById('gc-url')?.value||'').trim();
+  if(!/^https:\/\/calendar\.google\.com\//.test(url)){ alert('구글캘린더의 iCal 비공개 주소(https://calendar.google.com/...)를 붙여넣으세요.'); return; }
+  if(!D.gcalCals) D.gcalCals=[];
+  D.gcalCals.push({name:name||'구글 캘린더',url});
+  save(); render();
+}
+function delGcal(i){
+  if(!confirm('이 구글 캘린더 연동을 삭제할까요?')) return;
+  D.gcalCals.splice(i,1);
+  save(); render();
+}
 // 날짜 → 이벤트 목록: 단계 마감일 / 업무·하위업무 마감일 / 준공 목표
 function calEvents(mineOnly){
   const map={};
@@ -648,6 +702,12 @@ function renderCal(){
   const ym=V.calYm||t.slice(0,7); V.calYm=ym;
   const [y,m]=ym.split('-').map(Number);
   const events=calEvents(V.calMine);
+  // 구글 캘린더 일정 병합
+  loadGcal();
+  (GCAL.events||[]).forEach(e=>{
+    if(!e.date) return;
+    (events[e.date]=events[e.date]||[]).push({t:'gcal',pid:null,pname:e.cal,label:e.label});
+  });
   const startDow=new Date(y,m-1,1).getDay();
   const daysIn=new Date(y,m,0).getDate();
   const sel=V.calSel||(t.slice(0,7)===ym?t:null);
@@ -662,7 +722,7 @@ function renderCal(){
     const dow=(startDow+d-1)%7;
     // 점 표시: 완료된 업무는 제외, 유형별 1개씩 최대 3개
     const types=[...new Set(evs.filter(e=>!(e.t==='task'&&e.done)).map(e=>e.t))];
-    const dots=types.slice(0,3).map(tp=>`<span class="dot" style="background:${CAL_COLORS[tp]}"></span>`).join('');
+    const dots=types.slice(0,4).map(tp=>`<span class="dot" style="background:${CAL_COLORS[tp]}"></span>`).join('');
     cells+=`<div class="cal-day ${ds===t?'today':''} ${ds===sel?'sel':''} ${dow===0?'sun':dow===6?'sat':''}"
       onclick="V.calSel='${ds}';render()">
       <div class="dn">${d}</div><div class="cal-dots">${dots}</div></div>`;
@@ -672,7 +732,7 @@ function renderCal(){
   const selList=sel?`
 <div class="sec-title">${Number(sel.slice(5,7))}월 ${Number(sel.slice(8))}일 마감 (${selEvs.length})</div>
 ${selEvs.length?selEvs.map(e=>`
-<div class="cal-ev" onclick="go('proj','${e.pid}')">
+<div class="cal-ev" ${e.pid?`onclick="go('proj','${e.pid}')"`:''}>
   <span class="dot" style="background:${CAL_COLORS[e.t]}"></span>
   <div style="flex:1;min-width:0">
     <div style="font-size:13.5px;${e.done?'text-decoration:line-through;color:var(--muted)':''}">${esc(e.label)}</div>
@@ -697,9 +757,32 @@ ${selEvs.length?selEvs.map(e=>`
     <span><i style="background:${CAL_COLORS.phase}"></i>단계 마감</span>
     <span><i style="background:${CAL_COLORS.task}"></i>업무 마감</span>
     <span><i style="background:${CAL_COLORS.end}"></i>준공 목표</span>
+    <span><i style="background:${CAL_COLORS.gcal}"></i>구글 일정</span>
   </div>
+  ${GCAL.loading?'<div style="text-align:center;font-size:11px;color:var(--muted);margin-top:5px">구글 캘린더 불러오는 중...</div>':''}
 </div>
+${renderGcalConfig()}
 ${selList}`;
+}
+function renderGcalConfig(){
+  const cals=D.gcalCals||[];
+  return `
+<div class="card" style="padding:12px 14px">
+  <button class="sub-add-btn" style="font-size:13px" onclick="V.gcalOpen=!V.gcalOpen;render()">⚙ 구글 캘린더 연동 ${cals.length?`(${cals.length}개 연결됨)`:''}</button>
+  ${V.gcalOpen?`
+  <div style="margin-top:10px">
+    ${cals.map((c,i)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f8fafc;border:1px solid var(--bd);border-radius:7px;margin-bottom:5px">
+      <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${CAL_COLORS.gcal};flex-shrink:0"></span>
+      <span style="flex:1;font-size:13px">${esc(c.name)}</span>
+      <button class="task-del" onclick="delGcal(${i})">✕</button>
+    </div>`).join('')}
+    <input type="text" id="gc-name" placeholder="이름 (예: 내 구글 캘린더)" style="width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:8px;margin-bottom:6px;font-size:13.5px">
+    <input type="text" id="gc-url" placeholder="iCal 비공개 주소 붙여넣기 (https://calendar.google.com/...)" style="width:100%;padding:9px 11px;border:1px solid var(--bd);border-radius:8px;margin-bottom:7px;font-size:12.5px">
+    <button class="open-add" style="margin:0" onclick="addGcal()">＋ 연동 추가</button>
+    <div class="np-note" style="text-align:left;margin-top:9px">📌 주소 찾는 법: 구글캘린더(웹) → ⚙ 설정 → 왼쪽에서 내 캘린더 선택 → <b>캘린더 통합</b> → <b>iCal 형식의 비공개 주소</b> 복사.<br>구글캘린더에 일정을 입력하면 여기 캘린더에 보라색으로 자동 표시됩니다 (최대 5분 지연). 반복 일정은 첫 회차만 표시됩니다.</div>
+  </div>`:''}
+</div>`;
 }
 
 // ── 프로젝트 등록/수정 폼 (신규·편집 공용) ────────────────
