@@ -47,6 +47,21 @@ body{font-family:'Segoe UI','Noto Sans KR',-apple-system,sans-serif;background:v
 .legend i{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:3px}
 .empty{text-align:center;padding:18px;color:var(--muted);font-size:12.5px}
 a.full{display:block;text-align:center;font-size:12px;color:var(--pr);margin-top:6px;text-decoration:none;font-weight:600}
+/* 위젯용 컴팩트 모드 (?compact=1) — 작은 위젯 프레임에 맞춤 */
+body.compact #app{padding:6px 6px 10px;max-width:none}
+body.compact .card{padding:8px;border-radius:9px;margin-bottom:6px}
+body.compact .hdr{margin-bottom:4px}
+body.compact .hdr .t{font-size:12.5px}
+body.compact .cal-head{margin-bottom:4px}
+body.compact .cal-head .ym{font-size:13px;min-width:84px}
+body.compact .cal-head button{font-size:14px;padding:2px 8px}
+body.compact .cal-day{min-height:30px;border-radius:4px;padding:1px}
+body.compact .cal-day .dn{font-size:10px}
+body.compact .legend{display:none}
+body.compact .sec-t{margin:7px 2px 4px;font-size:10.5px}
+body.compact .up-item{padding:5px 7px;margin-bottom:3px}
+body.compact a.full{display:none}
+body.compact .hdr button{display:none}
 </style>
 </head>
 <body>
@@ -84,6 +99,8 @@ const FB_CONFIG = {
 const PHASES=['기획','계획설계','기본설계','중간설계','실시설계','허가'];
 const COLORS={phase:'#3b82f6',task:'#f59e0b',end:'#10b981'};
 const PM_FILTER=new URLSearchParams(location.search).get('pm')||'';
+const COMPACT=new URLSearchParams(location.search).get('compact')==='1';
+if(COMPACT) document.addEventListener('DOMContentLoaded',()=>document.body.classList.add('compact'));
 let D=null, fbAuth=null, fbDb=null, _unsub=null, ym=null;
 
 function today(){ return new Date().toISOString().split('T')[0]; }
@@ -178,8 +195,9 @@ function render(){
       <div class="dn">${d}</div><div class="cal-dots">${dots}</div></div>`;
   }
 
-  // 다가오는 마감 14일
-  const upEnd=new Date(new Date(t).getTime()+14*864e5).toISOString().split('T')[0];
+  // 다가오는 마감 (일반 14일, 컴팩트 7일)
+  const upDays=COMPACT?7:14;
+  const upEnd=new Date(new Date(t).getTime()+upDays*864e5).toISOString().split('T')[0];
   const upcoming=Object.keys(events).filter(ds=>ds>=t&&ds<=upEnd).sort()
     .flatMap(ds=>events[ds].map(e=>({...e,ds})));
   const overdue=Object.keys(events).filter(ds=>ds<t).sort()
@@ -216,7 +234,7 @@ function render(){
   </div>
 </div>
 ${overdue.length?`<div class="sec-t" style="color:#b91c1c">기한 초과 (${overdue.length})</div>${overdue.map(item).join('')}`:''}
-<div class="sec-t">다가오는 마감 · 14일 (${upcoming.length})</div>
+<div class="sec-t">다가오는 마감 · ${upDays}일 (${upcoming.length})</div>
 ${upcoming.length?upcoming.map(item).join(''):'<div class="empty">2주 내 마감 일정이 없습니다.</div>'}
 <a class="full" href="/pm.html">PM 업무등록 앱 열기 ›</a>`;
 }
