@@ -463,7 +463,8 @@ function renderPhaseSec(pid,phase,isOpen,isCur){
   return `<div class="ph-sec">${head}<div class="ph-body">
     <div class="due-edit">
       <label>단계 마감일</label>
-      <input type="date" value="${dl}" onchange="setPhaseDeadline('${pid}',${idx},this.value)">
+      <input type="date" value="${dl}" onchange="setPhaseDeadlineCascade('${pid}',${idx},this.value)">
+      <span style="font-size:10.5px;color:var(--muted);flex-shrink:0">뒤 단계 자동 이동</span>
     </div>
     ${rows||'<div style="font-size:13px;color:var(--muted);padding:2px 0 4px">등록된 업무가 없습니다.</div>'}
     ${addForm}
@@ -522,6 +523,39 @@ function applyDefaultRatiosPm(pid){
   if(!confirm('기존 비율·마감일을 기본 비율 기준으로 다시 계산합니다. 계속할까요?')) return;
   p.phaseRatios={...DEFAULT_PHASE_RATIOS};
   recomputeDeadlinesData(p);
+  save(); render();
+}
+
+// ── 업무등록 박스의 단계 마감일 수정: 변경 폭(delta)만큼 뒤 단계 마감일도
+// 같이 이동한다. 해당 단계 비율은 현황과 동일한 계산식으로 재계산되고,
+// 뒤 단계들은 기간이 그대로 유지되므로 비율도 변하지 않는다. ──
+function setPhaseDeadlineCascade(pid,idx,newDate){
+  const p=(D.projects||[]).find(x=>x.id===pid); if(!p) return;
+  if(!p.phaseDeadlines) p.phaseDeadlines={};
+  if(!p.phaseRatios) p.phaseRatios={};
+  const ph=PHASES[idx];
+  const oldDate=p.phaseDeadlines[ph]||'';
+  const isLast=idx===PHASES.length-1;
+  // 삭제·마지막 단계·기존 마감일 없음(이동 기준 없음) → 현황 방식 그대로
+  if(!newDate||isLast||!oldDate){ setPhaseDeadline(pid,idx,newDate); return; }
+  const delta=Math.round((new Date(newDate)-new Date(oldDate))/864e5);
+  p.phaseDeadlines[ph]=newDate;
+  const cVal=p.contract||'', eVal=p.end||'';
+  if(cVal&&eVal){
+    const totalDays=(new Date(eVal)-new Date(cVal))/86400000;
+    if(totalDays>0){
+      const prevDl=idx>0?(p.phaseDeadlines[PHASES[idx-1]]||cVal):cVal;
+      p.phaseRatios[ph]=Math.round((new Date(newDate)-new Date(prevDl))/86400000/totalDays*100);
+    }
+  }
+  if(delta!==0){
+    for(let j=idx+1;j<PHASES.length;j++){
+      const jph=PHASES[j];
+      if(p.phaseDeadlines[jph]){
+        p.phaseDeadlines[jph]=new Date(new Date(p.phaseDeadlines[jph]).getTime()+delta*864e5).toISOString().split('T')[0];
+      }
+    }
+  }
   save(); render();
 }
 
